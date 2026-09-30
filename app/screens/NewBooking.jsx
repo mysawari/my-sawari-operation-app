@@ -397,6 +397,8 @@ function NewBookingScreenInner() {
   const [vehicleSearch, setVehicleSearch] = useState("");
 
   const [discountAmount, setDiscountAmount] = useState("");
+  const [hasMembership, setHasMembership] = useState(false);
+  const [membershipTier, setMembershipTier] = useState(null);
 
   // ── Spare & Toolkit check (highlighted section) ──
   const [spareAvailable, setSpareAvailable] = useState("");
@@ -2109,7 +2111,8 @@ function NewBookingScreenInner() {
                     value={getPickerValue()}
                     mode={pickerMode}
                     display="spinner"
-                    onChange={onDateChange}
+                    onValueChange={onDateChange}
+                    onDismiss={() => onDateChange({type: "dismissed"})}
                   />
                 </TouchableOpacity>
               </TouchableOpacity>
@@ -2119,7 +2122,8 @@ function NewBookingScreenInner() {
               value={getPickerValue()}
               mode={pickerMode}
               display="default"
-              onChange={onDateChange}
+              onValueChange={onDateChange}
+              onDismiss={() => onDateChange({type: "dismissed"})}
             />
           ))}
       </KeyboardAvoidingView>

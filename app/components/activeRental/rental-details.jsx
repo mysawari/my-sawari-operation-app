@@ -324,12 +324,25 @@ export default function RentalDetailsScreen() {
                 {handover.customer?.mobileNumber}
               </Text>
             </View>
-            <TouchableOpacity
-              style={styles.actionCallCircle}
-              onPress={() => handleCall(handover.customer?.mobileNumber)}
-            >
-              <Ionicons name="call" size={20} color="white" />
-            </TouchableOpacity>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              {handover.customerLocation?.coordinates && handover.customerLocation?.coordinates.length === 2 && (
+                <TouchableOpacity
+                  style={[styles.actionCallCircle, { backgroundColor: "#FFC107" }]}
+                  onPress={() => {
+                    const [lng, lat] = handover.customerLocation.coordinates;
+                    Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`);
+                  }}
+                >
+                  <Ionicons name="location" size={20} color="#0F2554" />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={styles.actionCallCircle}
+                onPress={() => handleCall(handover.customer?.mobileNumber)}
+              >
+                <Ionicons name="call" size={20} color="white" />
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Vehicle Info Card */}

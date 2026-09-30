@@ -376,6 +376,7 @@ export default function LeadsScreen() {
   const listRef = useRef(null);
 
   const [leads, setLeads] = useState([]);
+  const [appLeads, setAppLeads] = useState([]);
   const [stats, setStats] = useState({
     totalLeads: 0,
     todayFollowups: 0,

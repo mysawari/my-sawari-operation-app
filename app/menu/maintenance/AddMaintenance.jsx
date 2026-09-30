@@ -1436,7 +1436,8 @@ export default function AddMaintenanceScreen() {
           mode="date"
           display={Platform.OS === "ios" ? "inline" : "default"}
           minimumDate={new Date()}
-          onChange={handleDateChange}
+          onValueChange={handleDateChange}
+          onDismiss={() => setShowDatePicker(false)}
         />
       )}
       {Platform.OS === "ios" && showDatePicker && (

@@ -700,7 +700,8 @@ export default function AddLeadScreen({ navigation }) {
                   value={selectedDateObject}
                   mode="date"
                   display={Platform.OS === "ios" ? "spinner" : "default"}
-                  onChange={onDateChange}
+                  onValueChange={onDateChange}
+                  onDismiss={() => onDateChange({type: "dismissed"})}
                 />
               </>
             )}

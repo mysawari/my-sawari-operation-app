@@ -180,7 +180,8 @@ const FormHeader = ({
             value={nextFollowUpDate}
             mode="date"
             display={Platform.OS === "ios" ? "inline" : "calendar"}
-            onChange={handleDateChange}
+            onValueChange={handleDateChange}
+            onDismiss={() => setShowDatePicker(false)}
           />
         )}
       </View>

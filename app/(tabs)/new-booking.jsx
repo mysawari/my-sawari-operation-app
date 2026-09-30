@@ -1678,7 +1678,8 @@ export default function BookingScreen() {
                 value={tempDateFrom || new Date()}
                 mode="date"
                 display={Platform.OS === "ios" ? "inline" : "default"}
-                onChange={onChangeFromDate}
+                onValueChange={onChangeFromDate}
+                onDismiss={() => setShowFromPicker(false)}
                 maximumDate={tempDateTo || undefined}
               />
             )}
@@ -1688,7 +1689,8 @@ export default function BookingScreen() {
                 value={tempDateTo || tempDateFrom || new Date()}
                 mode="date"
                 display={Platform.OS === "ios" ? "inline" : "default"}
-                onChange={onChangeToDate}
+                onValueChange={onChangeToDate}
+                onDismiss={() => setShowToPicker(false)}
                 minimumDate={tempDateFrom || undefined}
               />
             )}

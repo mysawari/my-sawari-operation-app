@@ -84,6 +84,8 @@ export default function EditRentalScreen() {
     vehicleModel: navVehicleModel,
     plateNumber: navPlateNumber,
     pickupDateTime: navPickupDateTime,
+    newDropDate,
+    extensionId,
   } = useLocalSearchParams();
   const { token } = useAuthStore();
 
@@ -100,11 +102,13 @@ export default function EditRentalScreen() {
   const [customerInfo, setCustomerInfo] = useState({
     name: navCustomerName || "",
     phone: navCustomerPhone || "",
+    location: null,
   });
   const [vehicleInfo, setVehicleInfo] = useState({
     model: navVehicleModel || "",
     plateNumber: navPlateNumber || "",
   });
+  const [bookingCode, setBookingCode] = useState("");
   const [pickupDate, setPickupDate] = useState(
     isValidDate(navPickupDateTime) ? new Date(navPickupDateTime) : new Date(),
   );
@@ -276,7 +280,8 @@ export default function EditRentalScreen() {
       const data = response.data.data;
       const serverBillSummary = data.billSummary || null;
 
-      setCustomerInfo({ name: data.customerName, phone: data.customerPhone });
+      setCustomerInfo({ name: data.customerName, phone: data.customerPhone, location: data.customerLocation });
+      setBookingCode(data.bookingCode || "");
       setVehicleInfo({
         model: data.vehicleModel,
         plateNumber: data.plateNumber,
@@ -294,7 +299,11 @@ export default function EditRentalScreen() {
 
       setPickupDate(new Date(data.pickupDateTime));
       setOriginalDropDateTime(new Date(data.dropDateTime));
-      setDropDateTime(new Date(data.dropDateTime));
+      if (newDropDate && isValidDate(newDropDate)) {
+        setDropDateTime(new Date(newDropDate));
+      } else {
+        setDropDateTime(new Date(data.dropDateTime));
+      }
 
       setOriginalNumberOfDays(
         serverBillSummary?.originalBill?.numberOfDays || data.numberOfDays || 1,
@@ -583,6 +592,15 @@ export default function EditRentalScreen() {
         },
       });
 
+      if (extensionId) {
+        try {
+          // If we came here from the ExtensionRequests screen, mark it as approved
+          await api.put(`/extensions/${extensionId}/status`, { status: "approved" });
+        } catch (extError) {
+          console.warn("Could not mark extension as approved:", extError);
+        }
+      }
+
       Alert.alert("Success", "Rental updated successfully", [
         { text: "OK", onPress: () => router.replace("/(tabs)/home") },
       ]);
@@ -668,10 +686,29 @@ export default function EditRentalScreen() {
           <View style={styles.formContainer}>
             <View style={styles.readOnlyCard}>
               <Text style={styles.cardHeaderLabel}>Account Reference</Text>
+              {bookingCode ? (
+                <Text style={styles.readOnlyText}>
+                  <Text style={{ fontWeight: "700" }}>Booking ID </Text>
+                  {bookingCode}
+                </Text>
+              ) : null}
               <Text style={styles.readOnlyText}>
                 <Text style={{ fontWeight: "700" }}>Customer </Text>
                 {customerInfo.name} • {customerInfo.phone}
               </Text>
+              {customerInfo.location?.coordinates && customerInfo.location.coordinates.length === 2 && (
+                <TouchableOpacity 
+                  onPress={() => {
+                    const [lng, lat] = customerInfo.location.coordinates;
+                    Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`);
+                  }}
+                  style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, padding: 8, backgroundColor: '#EFF6FF', borderRadius: 8, alignSelf: 'flex-start' }}
+                >
+                  <Ionicons name="location" size={16} color="#2563EB" />
+                  <Text style={{ color: '#2563EB', marginLeft: 6, fontWeight: '600', fontSize: 13 }}>Track Location</Text>
+                </TouchableOpacity>
+              )}
+              <View style={{ height: 12 }} />
               <Text style={styles.readOnlyText}>
                 <Text style={{ fontWeight: "700" }}>Vehicle </Text>
                 {vehicleInfo.model} · {vehicleInfo.plateNumber}
@@ -1318,7 +1355,8 @@ export default function EditRentalScreen() {
           value={dropDateTime}
           mode="date"
           display="default"
-          onChange={onDateChange}
+          onValueChange={onDateChange}
+          onDismiss={() => onDateChange({type: "dismissed"})}
         />
       )}
 
@@ -1328,7 +1366,8 @@ export default function EditRentalScreen() {
           mode="time"
           is24Hour={false}
           display="default"
-          onChange={onTimeChange}
+          onValueChange={onTimeChange}
+          onDismiss={() => onTimeChange({type: "dismissed"})}
         />
       )}
 

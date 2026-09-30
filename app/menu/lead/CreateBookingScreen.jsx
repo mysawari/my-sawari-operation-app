@@ -1394,7 +1394,8 @@ export default function CreateBookingScreen() {
                     value={pickerDateValue}
                     mode={pickerMode}
                     display="spinner"
-                    onChange={onPickerChange}
+                    onValueChange={onPickerChange}
+                    onDismiss={() => setShowPicker(false)}
                   />
                   <TouchableOpacity
                     style={styles.iosPickerCloseButton}
@@ -1413,7 +1414,8 @@ export default function CreateBookingScreen() {
               value={pickerDateValue}
               mode={pickerMode}
               display="default"
-              onChange={onPickerChange}
+              onValueChange={onPickerChange}
+              onDismiss={() => setShowPicker(false)}
             />
           )}
 

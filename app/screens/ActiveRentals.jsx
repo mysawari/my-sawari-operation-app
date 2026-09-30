@@ -1,6 +1,6 @@
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -184,6 +184,7 @@ export default function ActiveRentalsScreen() {
 
     return {
       id: item._id,
+      bookingCode: item.bookingId?.bookingCode || "",
       customer: item.customer?.fullName || "Unknown Customer",
       phone: item.customer?.mobileNumber || "",
       vehicle: item.vehicle?.vehicleName || "Unknown Vehicle",
@@ -477,7 +478,12 @@ export default function ActiveRentalsScreen() {
             <Text style={styles.infoValue} numberOfLines={1}>
               {item.vehicle}
             </Text>
-            <Text style={styles.customerName} numberOfLines={1}>
+            {item.bookingCode ? (
+              <Text style={{ fontSize: 11, color: "#64748B", fontWeight: "600", marginTop: 2 }}>
+                Booking ID: {item.bookingCode}
+              </Text>
+            ) : null}
+            <Text style={[styles.customerName, { marginTop: 2 }]} numberOfLines={1}>
               {item.customer}
             </Text>
 

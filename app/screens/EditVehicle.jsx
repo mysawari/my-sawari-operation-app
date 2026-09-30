@@ -944,7 +944,8 @@ export default function EditVehicleScreen() {
             value={getPickerDate()}
             mode="date"
             display={Platform.OS === "ios" ? "spinner" : "default"}
-            onChange={onDateChange}
+            onValueChange={onDateChange}
+            onDismiss={() => onDateChange({type: "dismissed"})}
           />
         )}
       </KeyboardAvoidingView>

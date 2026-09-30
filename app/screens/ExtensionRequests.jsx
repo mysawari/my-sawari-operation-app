@@ -1,19 +1,21 @@
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
     Alert,
     FlatList,
     Image,
     Linking,
+    Modal,
     Pressable,
     StatusBar,
     StyleSheet,
     Text,
+    TextInput,
     View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { extensionRequestsData } from "../../constants/homeData";
+import api from "../../services/api";
 
 const C = {
   bg: "#F8FAFC",
@@ -34,14 +36,14 @@ const C = {
 
 const FILTERS = [
   { key: "pending", label: "Pending" },
-  { key: "accepted", label: "Accepted" },
-  { key: "declined", label: "Declined" },
+  { key: "approved", label: "Approved" },
+  { key: "rejected", label: "Rejected" },
 ];
 
 const STATUS_STYLE = {
   pending: { label: "Awaiting reply", color: C.amber, bg: C.amberBg },
-  accepted: { label: "Accepted", color: C.green, bg: C.greenBg },
-  declined: { label: "Declined", color: C.red, bg: C.redBg },
+  approved: { label: "Approved", color: C.green, bg: C.greenBg },
+  rejected: { label: "Rejected", color: C.red, bg: C.redBg },
 };
 
 const formatINR = (n) => "₹" + Number(n).toLocaleString("en-IN");
@@ -162,6 +164,15 @@ function RequestCard({ item, onAccept, onDecline }) {
         <Text style={styles.reasonText}>{item.reason}</Text>
       </View>
 
+      {!isPending && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingHorizontal: 4 }}>
+          <Feather name="user-check" size={12} color={C.muted} />
+          <Text style={{ fontSize: 11, color: C.sub, marginLeft: 6 }}>
+            {item.status === 'approved' ? 'Approved by' : 'Rejected by'} <Text style={{ fontWeight: '600' }}>{item.processedBy}</Text>
+          </Text>
+        </View>
+      )}
+
       {/* Actions */}
       {isPending && (
         <View style={styles.actions}>
@@ -196,8 +207,62 @@ function RequestCard({ item, onAccept, onDecline }) {
 /* ---------- Screen ---------- */
 export default function ExtensionRequests() {
   const router = useRouter();
-  const [requests, setRequests] = useState(extensionRequestsData ?? []);
+  const [requests, setRequests] = useState([]);
   const [filter, setFilter] = useState("pending");
+  const [loading, setLoading] = useState(true);
+  
+  const [rejectModalVisible, setRejectModalVisible] = useState(false);
+  const [rejectItem, setRejectItem] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
+
+  const fetchExtensions = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get("/extensions");
+      if (response.data?.success) {
+        const mapped = response.data.data.map(r => {
+          const booking = r.bookingId || {};
+          const customer = r.customerId || {};
+          
+          const customerName = customer.customerName || customer.name || booking.customerName || 'Unknown Customer';
+          const customerPhone = customer.mobileNumber || booking.customerPhone || 'Unknown Mobile';
+          const vehicleName = booking.vehicleName || 'Unknown Vehicle';
+
+          return {
+            id: r._id,
+            rentalId: booking._id || booking,
+            vehicle: {
+              name: vehicleName,
+              number: booking.vehicleNumber || '',
+            },
+            customer: {
+              name: customerName,
+              phone: customerPhone,
+            },
+            fromDate: booking.toDate ? new Date(booking.toDate).toLocaleDateString() : 'N/A',
+            fromTime: booking.dropTime || 'N/A',
+            toDate: r.requestedDropDate ? new Date(r.requestedDropDate).toLocaleDateString() : 'N/A',
+            rawToDate: r.requestedDropDate,
+            toTime: r.requestedDropTime || 'N/A',
+            extraAmount: 0, // This is determined when extending the active rental, not by the extension request
+            status: r.status,
+            reason: r.reason || 'No reason provided',
+            processedBy: r.processedBy?.name || 'Unknown',
+            createdAt: r.createdAt
+          };
+        });
+        setRequests(mapped.reverse());
+      }
+    } catch (err) {
+      console.log("Error fetching extensions:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchExtensions();
+  }, []);
 
   const counts = useMemo(
     () =>
@@ -210,37 +275,61 @@ export default function ExtensionRequests() {
 
   const visible = requests.filter((r) => r.status === filter);
 
-  const updateStatus = (id, status) => {
-    // TODO: call your API here, then update state on success
-    setRequests((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, status } : r)),
-    );
+  const updateStatus = async (id, status, rentalId, newDropDate) => {
+    try {
+      await api.put(`/extensions/${id}/status`, { status });
+      setRequests((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, status } : r)),
+      );
+
+      if (status === "approved") {
+        const queryParams = new URLSearchParams({ id: rentalId });
+        if (newDropDate) queryParams.append("newDropDate", newDropDate);
+        router.push(`/components/activeRental/edit-rental?${queryParams.toString()}`);
+      }
+    } catch (err) {
+      console.log("Error updating status:", err);
+      Alert.alert("Error", "Could not update status.");
+    }
   };
 
   const handleAccept = (item) => {
     Alert.alert(
       "Accept extension?",
-      `${item.customer.name}'s rental of ${item.vehicle.name} will be extended to ${item.toDate}, ${item.toTime}. Extra charge: ${formatINR(item.extraAmount)}.`,
+      `${item.customer.name}'s rental of ${item.vehicle.name} will be extended to ${item.toDate}, ${item.toTime}.\n\nAdditional charges will be calculated on the next screen.`,
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Accept", onPress: () => updateStatus(item.id, "accepted") },
+        { 
+          text: "Proceed to Edit", 
+          onPress: () => {
+            const queryParams = new URLSearchParams({ id: item.rentalId, extensionId: item.id });
+            if (item.rawToDate) queryParams.append("newDropDate", item.rawToDate);
+            router.push(`/components/activeRental/edit-rental?${queryParams.toString()}`);
+          }
+        },
       ],
     );
   };
 
   const handleDecline = (item) => {
-    Alert.alert(
-      "Decline extension?",
-      `${item.customer.name} will need to return ${item.vehicle.name} on ${item.fromDate}, ${item.fromTime}.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Decline",
-          style: "destructive",
-          onPress: () => updateStatus(item.id, "declined"),
-        },
-      ],
-    );
+    setRejectItem(item);
+    setRejectReason("");
+    setRejectModalVisible(true);
+  };
+
+  const confirmDecline = async () => {
+    if (!rejectItem) return;
+    try {
+      await api.put(`/extensions/${rejectItem.id}/status`, { status: "rejected", rejectReason });
+      setRequests((prev) =>
+        prev.map((r) => (r.id === rejectItem.id ? { ...r, status: "rejected" } : r)),
+      );
+      setRejectModalVisible(false);
+      setRejectItem(null);
+    } catch (err) {
+      console.log("Error declining:", err);
+      Alert.alert("Error", "Could not update status.");
+    }
   };
 
   const EmptyState = () => (
@@ -326,6 +415,58 @@ export default function ExtensionRequests() {
         ListEmptyComponent={EmptyState}
         showsVerticalScrollIndicator={false}
       />
+
+      {/* Reject Reason Modal */}
+      <Modal visible={rejectModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Reject Extension</Text>
+            <Text style={styles.modalSub}>
+              Provide a reason for rejection.
+            </Text>
+
+            <TextInput
+              style={styles.textInput}
+              placeholder="e.g., Vehicle booked by another customer..."
+              value={rejectReason}
+              onChangeText={setRejectReason}
+              multiline
+              numberOfLines={3}
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={[styles.modalBtn, { backgroundColor: "#F1F5F9" }]}
+                onPress={() => {
+                  setRejectModalVisible(false);
+                  setRejectItem(null);
+                }}
+              >
+                <Text style={{ color: "#475569", fontWeight: "600" }}>
+                  Cancel
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={[
+                  styles.modalBtn,
+                  {
+                    backgroundColor: !rejectReason.trim()
+                      ? "#FCA5A5"
+                      : "#EF4444",
+                  },
+                ]}
+                onPress={confirmDecline}
+                disabled={!rejectReason.trim()}
+              >
+                <Text style={{ color: "#FFF", fontWeight: "600" }}>
+                  Confirm Reject
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -571,4 +712,11 @@ const styles = StyleSheet.create({
     marginTop: 6,
     lineHeight: 20,
   },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  modalContent: { backgroundColor: '#FFF', width: '85%', borderRadius: 16, padding: 20 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A', marginBottom: 8 },
+  modalSub: { fontSize: 14, color: '#64748B', marginBottom: 16, lineHeight: 20 },
+  textInput: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, padding: 12, fontSize: 15, color: '#0F172A', textAlignVertical: 'top', minHeight: 80 },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 24 },
+  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 }
 });

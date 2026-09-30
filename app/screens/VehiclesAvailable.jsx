@@ -708,7 +708,8 @@ function DatePickerModal({
         mode="date"
         display="default"
         minimumDate={minimumDate}
-        onChange={onChange}
+        onValueChange={onChange}
+        onDismiss={() => onChange({type: "dismissed"})}
       />
     );
   }
@@ -729,7 +730,8 @@ function DatePickerModal({
             mode="date"
             display="inline"
             minimumDate={minimumDate}
-            onChange={onChange}
+            onValueChange={onChange}
+            onDismiss={() => onChange({type: "dismissed"})}
             themeVariant="light"
             accentColor={COLORS.gold}
             style={{ alignSelf: "stretch" }}

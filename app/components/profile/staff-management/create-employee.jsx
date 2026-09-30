@@ -24,7 +24,7 @@ import useAuthStore from "../../../../store/authStore";
 
 // ── API helper ──────────────────────────────────────────────────────────────
 const BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ?? "https://my-sawari.onrender.com/api/v1";
+  process.env.EXPO_PUBLIC_API_URL ?? "https://mysawari-operation-backend.onrender.com/api/v1";
 
 async function apiCreateEmployee(payload, token) {
   const res = await fetch(`${BASE_URL}/auth/employees`, {

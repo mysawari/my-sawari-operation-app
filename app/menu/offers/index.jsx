@@ -77,7 +77,7 @@ export default function OffersScreen() {
       const v = response.data?.data || response.data || [];
       setVehicles(v);
     } catch (error) {
-      console.warn('Failed to load vehicles', error);
+      console.warn('Failed to load vehicles', error?.message);
     }
   }, []);
 
@@ -99,7 +99,7 @@ export default function OffersScreen() {
       });
       Alert.alert('Success', 'Push notification sent to all customers!');
     } catch (err) {
-      console.warn("Failed to broadcast notification", err);
+      console.warn("Failed to broadcast notification", err?.message);
       Alert.alert('Error', 'Failed to broadcast notification via backend.');
     }
   };

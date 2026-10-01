@@ -46,7 +46,7 @@ export default function RootLayout() {
       try {
         await initializeAuth();
       } catch (error) {
-        console.error("Auth initialization failed:", error);
+        console.error("Auth initialization failed:", error?.message);
       }
     };
 
@@ -69,7 +69,7 @@ export default function RootLayout() {
           await messaging().subscribeToTopic('admin_notifications');
           console.log("Subscribed to admin_notifications topic!");
         } catch (error) {
-          console.error("Push notification setup failed:", error);
+          console.error("Push notification setup failed:", error?.message);
         }
       };
       

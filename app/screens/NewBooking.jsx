@@ -33,7 +33,7 @@ class ScreenErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, info) {
-    console.log("NewBookingScreen crashed:", error, info);
+    console.log("NewBookingScreen crashed:", error?.message);
   }
 
   handleReset = () => {

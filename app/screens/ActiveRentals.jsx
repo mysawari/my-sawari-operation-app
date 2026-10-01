@@ -244,7 +244,7 @@ export default function ActiveRentalsScreen() {
       screenCache.rentalsData = formattedData;
       persistToDisk(rawData);
     } catch (error) {
-      console.log("Fetch error:", error?.response?.data || error.message);
+      console.log("Fetch error:", error?.response?.data?.message || error?.message);
       if (!silent) {
         Alert.alert(
           "Error",
@@ -347,7 +347,7 @@ export default function ActiveRentalsScreen() {
           return Linking.openURL(url);
         }
       })
-      .catch((err) => console.error("Error opening dialer:", err));
+      .catch((err) => console.error("Error opening dialer:", err?.message));
   };
 
   const handleSelectTab = (key) => {

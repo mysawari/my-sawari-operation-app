@@ -16,7 +16,7 @@ export default function MembershipsScreen() {
       const response = await api.get('/memberships');
       setMemberships(response.data?.data || response.data || []);
     } catch (error) {
-      console.error(error);
+      console.error(error?.message);
       Alert.alert('Error', 'Failed to load memberships');
     } finally {
       setLoading(false);
@@ -40,7 +40,7 @@ export default function MembershipsScreen() {
         target: 'specific', customerId: [customerId], title, body
       });
     } catch (err) {
-      console.warn("Failed to send notification", err);
+      console.warn("Failed to send notification", err?.message);
     }
   };
 
@@ -60,7 +60,7 @@ export default function MembershipsScreen() {
               notifyCustomer(customerId, 'Membership Cancelled', 'Your MySawari membership has been cancelled.');
               fetchMemberships();
             } catch (error) {
-              console.error(error);
+              console.error(error?.message);
               Alert.alert('Error', 'Failed to cancel membership');
             }
           }

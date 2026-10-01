@@ -80,7 +80,7 @@ export default function CustomersScreen() {
         },
       ]);
     } catch (error) {
-      console.log("CUSTOMERS ERROR:", error?.response?.data || error.message);
+      console.log("CUSTOMERS ERROR:", error?.response?.data?.message || error?.message);
     } finally {
       loading && setLoading(false);
     }

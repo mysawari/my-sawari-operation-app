@@ -24,7 +24,7 @@ export default function SendNotificationScreen() {
           setCustomers(res.data.data);
         }
       } catch (err) {
-        console.warn('Failed to fetch customers', err);
+        console.warn('Failed to fetch customers', err?.message);
       }
     };
     fetchCustomers();
@@ -69,7 +69,7 @@ export default function SendNotificationScreen() {
       setBody('');
       setMobile('');
     } catch (err) {
-      console.warn("Failed to send notification", err);
+      console.warn("Failed to send notification", err?.message);
       Alert.alert('Error', 'Failed to send notification via backend.');
     } finally {
       setLoading(false);

@@ -16,7 +16,7 @@ export default function RefundsScreen() {
       const response = await api.get('/refunds');
       setRefunds(response.data);
     } catch (error) {
-      console.error(error);
+      console.error(error?.message);
       Alert.alert('Error', 'Failed to load refunds');
     } finally {
       setLoading(false);
@@ -40,7 +40,7 @@ export default function RefundsScreen() {
         target: 'specific', customerId: [customerId], title, body
       });
     } catch (err) {
-      console.warn("Failed to send notification", err);
+      console.warn("Failed to send notification", err?.message);
     }
   };
 
@@ -68,7 +68,7 @@ export default function RefundsScreen() {
 
               fetchRefunds();
             } catch (error) {
-              console.error(error);
+              console.error(error?.message);
               Alert.alert('Error', `Failed to ${actionText} refund`);
             }
           }

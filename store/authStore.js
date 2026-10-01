@@ -60,7 +60,7 @@ const useAuthStore = create((set) => ({
         initialized: true,
       });
     } catch (error) {
-      console.error("Initialize Auth:", error);
+      console.error("Initialize Auth:", error?.message);
 
       set({
         token: null,

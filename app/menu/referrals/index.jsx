@@ -36,7 +36,7 @@ export default function ReferralsScreen() {
       allWithdrawals.sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt));
       setWithdrawals(allWithdrawals);
     } catch (error) {
-      console.error(error);
+      console.error(error?.message);
       Alert.alert('Error', 'Failed to load referral withdrawals');
     } finally {
       setLoading(false);
@@ -60,7 +60,7 @@ export default function ReferralsScreen() {
         target: 'specific', customerId: [customerId], title, body
       });
     } catch (err) {
-      console.warn("Failed to send notification", err);
+      console.warn("Failed to send notification", err?.message);
     }
   };
 
@@ -85,7 +85,7 @@ export default function ReferralsScreen() {
               }
               fetchReferrals();
             } catch (error) {
-              console.error(error);
+              console.error(error?.message);
               Alert.alert('Error', 'Failed to update withdrawal status');
             }
           }

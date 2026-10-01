@@ -1,16 +1,32 @@
 import { Redirect, Slot, useSegments } from "expo-router";
-import { useEffect, useRef } from "react";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { StyleSheet, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import useAuthStore from "../store/authStore";
+import * as SplashScreen from 'expo-splash-screen';
+import { AnimatedSplash } from "./components/AnimatedSplash";
 
-import messaging from "@react-native-firebase/messaging";
-import { Platform, PermissionsAndroid } from "react-native";
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
-// Register background handler early
-messaging().setBackgroundMessageHandler(async remoteMessage => {
-  console.log('Message handled in the background!', remoteMessage);
-});
+import { Platform, PermissionsAndroid, Alert } from "react-native";
+import Constants from "expo-constants";
+
+// Only require Firebase if not running in Expo Go
+let messaging = null;
+const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === 'storeClient';
+
+if (!isExpoGo) {
+  try {
+    const messagingModule = require("@react-native-firebase/messaging");
+    messaging = messagingModule.default || messagingModule;
+    // Register background handler early
+    messaging().setBackgroundMessageHandler(async remoteMessage => {
+      console.log('Message handled in the background!');
+    });
+  } catch (e) {
+    console.warn("Firebase messaging module not available");
+  }
+}
 
 export default function RootLayout() {
   const token = useAuthStore((state) => state.token);
@@ -39,11 +55,13 @@ export default function RootLayout() {
 
   // Setup Firebase Push Notifications
   useEffect(() => {
-    if (token) {
+    if (token && messaging && !isExpoGo) {
       const setupPushNotifications = async () => {
         try {
           if (Platform.OS === 'android') {
-            await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+            if (Platform.Version >= 33) {
+              await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+            }
           } else {
             await messaging().requestPermission();
           }
@@ -58,10 +76,9 @@ export default function RootLayout() {
       setupPushNotifications();
 
       const unsubscribe = messaging().onMessage(async (remoteMessage) => {
-        console.log('A new FCM message arrived!', JSON.stringify(remoteMessage));
-        // Use Alert from react-native (make sure it's imported)
-        const { Alert } = require('react-native');
-        if (remoteMessage.notification) {
+        console.log('A new FCM message arrived!');
+        // Use Alert from react-native
+        if (remoteMessage?.notification) {
           Alert.alert(
             remoteMessage.notification.title || "New Notification",
             remoteMessage.notification.body
@@ -73,30 +90,29 @@ export default function RootLayout() {
     }
   }, [token]);
 
+  useEffect(() => {
+    if (initialized) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [initialized]);
+
   const inAuthGroup = segments[0] === "(auth)";
 
   return (
     <SafeAreaProvider>
-      {!initialized ? (
-        <View style={styles.loader}>
-          <ActivityIndicator size="large" color="#2563EB" />
-        </View>
-      ) : !token && !inAuthGroup ? (
-        <Redirect href="/(auth)/login" />
-      ) : token && inAuthGroup ? (
-        <Redirect href="/(tabs)" />
-      ) : (
-        <Slot />
-      )}
+      <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+        <AnimatedSplash isReady={initialized}>
+          {!initialized ? null : !token && !inAuthGroup ? (
+            <Redirect href="/(auth)/login" />
+          ) : token && inAuthGroup ? (
+            <Redirect href="/(tabs)" />
+          ) : (
+            <Slot />
+          )}
+        </AnimatedSplash>
+      </View>
     </SafeAreaProvider>
   );
 }
 
-const styles = StyleSheet.create({
-  loader: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#F8FAFC",
-  },
-});
+const styles = StyleSheet.create({});

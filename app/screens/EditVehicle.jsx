@@ -248,7 +248,7 @@ export default function EditVehicleScreen() {
         setImages(completeSlots);
       }
     } catch (error) {
-      console.log("FETCH ERROR DETAILS:", error.response?.data || error);
+      console.log("FETCH ERROR DETAILS:", error?.response?.data?.message || error?.message);
 
       Alert.alert("Error", "Failed to fetch vehicle details.");
     } finally {
@@ -448,7 +448,7 @@ export default function EditVehicleScreen() {
 
       router.back();
     } catch (error) {
-      console.log("UPDATE ERROR:", error.response?.data || error);
+      console.log("UPDATE ERROR:", error?.response?.data?.message || error?.message);
 
       Alert.alert(
         "Update Failed",

@@ -111,7 +111,7 @@ export default function RentalDetailsScreen() {
         () => {},
       );
     } catch (error) {
-      console.log("Error fetching handover details:", error);
+      console.log("Error fetching handover details:", error?.message);
       if (!silent && !handover) {
         // Only alert if we truly have nothing to show — a silent background
         // refresh failing shouldn't interrupt someone reading cached data.

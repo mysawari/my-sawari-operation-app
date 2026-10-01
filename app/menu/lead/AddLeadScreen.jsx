@@ -340,10 +340,6 @@ export default function AddLeadScreen({ navigation }) {
       ]);
     } catch (err) {
       console.log("Lead creation error — status:", err?.response?.status);
-      console.log(
-        "Lead creation error — data:",
-        JSON.stringify(err?.response?.data, null, 2),
-      );
       console.log("Lead creation error — message:", err?.message);
 
       const errorMessage =

@@ -310,13 +310,11 @@ export default function BookingDetailsScreen() {
       } catch (err) {
         console.log("===== BOOKING ERROR =====");
         console.log("Status:", err.response?.status);
-        console.log("Data:", JSON.stringify(err.response?.data, null, 2));
-        console.log("URL:", err.config?.url);
         console.log("Message:", err.message);
 
         Alert.alert(
           "Error",
-          JSON.stringify(err.response?.data || err.message, null, 2),
+          err.response?.data?.message || err.message || "Something went wrong",
         );
       } finally {
         setRefreshing(false);
@@ -512,7 +510,7 @@ export default function BookingDetailsScreen() {
 
       initializeScreenData();
     } catch (err) {
-      console.log(err.response?.data || err);
+      console.log("Booking error:", err?.message);
 
       alert(err.response?.data?.message || "Unable to update booking");
     } finally {
@@ -543,7 +541,7 @@ export default function BookingDetailsScreen() {
         },
       ]);
     } catch (err) {
-      console.log("Cancel Error:", err.response?.data || err);
+      console.log("Cancel Error:", err?.message);
       Alert.alert(
         "Error",
         err.response?.data?.message || "Unable to cancel booking.",

@@ -343,7 +343,7 @@ const CompletionProofModal = ({ visible, submitting, onClose, onSubmit }) => {
       const url = await uploadImage(localUri);
       setter({ uri: localUri, url, uploading: false, error: null });
     } catch (err) {
-      console.log("Photo upload error:", err);
+      console.log("Photo upload error:", err?.message);
       setter({
         uri: localUri,
         url: null,
@@ -417,7 +417,7 @@ const CompletionProofModal = ({ visible, submitting, onClose, onSubmit }) => {
       const url = await uploadImage(photo.uri);
       setter({ ...photo, url, uploading: false, error: null });
     } catch (err) {
-      console.log("Photo retry upload error:", err);
+      console.log("Photo retry upload error:", err?.message);
       setter({ ...photo, uploading: false, error: "Upload failed" });
     }
   };
@@ -568,7 +568,7 @@ export default function MaintenanceDetails() {
         setError(true);
       }
     } catch (err) {
-      console.log("Maintenance Details Error", err);
+      console.log("Maintenance Details Error", err?.message);
       setError(true);
     } finally {
       setLoading(false);
@@ -614,7 +614,7 @@ export default function MaintenanceDetails() {
         Alert.alert("Update Failed", "Could not update the status. Try again.");
       }
     } catch (err) {
-      console.log("Update Status Error", err);
+      console.log("Update Status Error", err?.message);
       Alert.alert(
         "Update Failed",
         err?.response?.data?.message ||
@@ -645,7 +645,7 @@ export default function MaintenanceDetails() {
         Alert.alert("Update Failed", "Could not mark this as completed.");
       }
     } catch (err) {
-      console.log("Complete Maintenance Error", err);
+      console.log("Complete Maintenance Error", err?.message);
       Alert.alert(
         "Update Failed",
         err?.response?.data?.message ||

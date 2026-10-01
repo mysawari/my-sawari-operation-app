@@ -129,7 +129,7 @@ export default function HandoverImageScreen() {
         );
       }
     } catch (error) {
-      console.log("FETCH SAVED IMAGES ERROR:", error?.response?.data || error);
+      console.log("FETCH SAVED IMAGES ERROR:", error?.response?.data?.message || error?.message);
     }
   };
 
@@ -150,7 +150,7 @@ export default function HandoverImageScreen() {
         allowsEditing: false,
       });
     } catch (error) {
-      console.log("CAMERA ERROR:", error);
+      console.log("CAMERA ERROR:", error?.message);
       Alert.alert("Camera Error", "Unable to open camera. Please try again.");
       return;
     }
@@ -235,7 +235,7 @@ export default function HandoverImageScreen() {
       // 4. Return URL
       return uploadedUrl;
     } catch (error) {
-      console.log("UPLOAD ERROR:", error);
+      console.log("UPLOAD ERROR:", error?.message);
       throw error;
     } finally {
       setUploading((prev) => ({
@@ -262,7 +262,7 @@ export default function HandoverImageScreen() {
         allowsEditing: false,
       });
     } catch (error) {
-      console.log("CAMERA ERROR:", error);
+      console.log("CAMERA ERROR:", error?.message);
       Alert.alert("Camera Error", "Unable to open camera. Please try again.");
       return;
     }
@@ -311,7 +311,7 @@ export default function HandoverImageScreen() {
         ),
       );
     } catch (error) {
-      console.log("DAMAGE UPLOAD ERROR:", error);
+      console.log("DAMAGE UPLOAD ERROR:", error?.message);
       setDamageImages((prev) => prev.filter((img) => img.id !== localId));
       Alert.alert(
         "Upload Failed",
@@ -383,9 +383,7 @@ export default function HandoverImageScreen() {
         },
       ]);
     } catch (error) {
-      console.log("FULL ERROR:", error);
-      console.log("RESPONSE:", error?.response?.data);
-      console.log("MESSAGE:", error?.message);
+      console.log("HANDOVER ERROR:", error?.message);
 
       Alert.alert(
         "Error",

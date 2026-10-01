@@ -75,7 +75,7 @@ export default function UpdateRoleScreen() {
 
       setEmployees(res.data.data || []);
     } catch (error) {
-      console.log("FETCH EMPLOYEES ERROR:", error?.response?.data || error);
+      console.log("FETCH EMPLOYEES ERROR:", error?.response?.data?.message || error?.message);
       Alert.alert(
         "Error",
         error?.response?.data?.message || "Failed to load employees",
@@ -148,7 +148,7 @@ export default function UpdateRoleScreen() {
         )}`,
       );
     } catch (error) {
-      console.log("UPDATE ROLE ERROR:", error?.response?.data || error);
+      console.log("UPDATE ROLE ERROR:", error?.response?.data?.message || error?.message);
       Alert.alert(
         "Operation Failed",
         error?.response?.data?.message || "Failed to update role",

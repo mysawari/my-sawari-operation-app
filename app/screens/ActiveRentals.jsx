@@ -268,7 +268,7 @@ export default function ActiveRentalsScreen() {
       screenCache.rentalsData = formattedData;
       persistToDisk(rawData);
     } catch (error) {
-      console.log(error);
+      console.log("Active rentals error:", error?.message);
     } finally {
       setRefreshing(false);
     }

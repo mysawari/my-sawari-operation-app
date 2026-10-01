@@ -124,7 +124,7 @@ const formatCompactDateTime = (dateString) => {
 const openDialer = (phoneNumber) => {
   if (!phoneNumber) return;
   Linking.openURL(`tel:${phoneNumber}`).catch((err) =>
-    console.log("Error launching phone dialer:", err),
+    console.log("Error launching phone dialer:", err?.message),
   );
 };
 

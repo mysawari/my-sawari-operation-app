@@ -84,7 +84,7 @@ export default function SideMenu({ visible, onClose }) {
       onClose?.();
       router.replace("/(auth)/login");
     } catch (error) {
-      console.log("Logout Error:", error);
+      console.log("Logout Error:", error?.message);
     }
   };
 

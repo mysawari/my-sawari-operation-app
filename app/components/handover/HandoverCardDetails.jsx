@@ -387,7 +387,7 @@ export default function HandoverDetails() {
       } catch (error) {
         console.log(
           "Handover Details Error:",
-          error.response?.data || error.message,
+          error?.response?.data?.message || error?.message,
         );
       } finally {
         setLoading(false);

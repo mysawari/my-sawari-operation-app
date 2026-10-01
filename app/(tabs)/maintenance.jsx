@@ -351,7 +351,7 @@ export default function VehicleMaintenanceScreen() {
         setMaintenance(response.data.data || []);
       }
     } catch (error) {
-      console.log("Maintenance Error", error);
+      console.log("Maintenance Error", error?.message);
     } finally {
       setLoading(false);
       setRefreshing(false);

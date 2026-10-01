@@ -334,7 +334,7 @@ export default function CreateBookingScreen() {
       });
       setVehicles(vehicleRes.data.data || []);
     } catch (err) {
-      console.log("Vehicle Fetch Error:", err.response?.data || err);
+      console.log("Vehicle Fetch Error:", err?.response?.data?.message || err?.message);
     } finally {
       setVehiclesLoading(false);
     }
@@ -457,7 +457,7 @@ export default function CreateBookingScreen() {
         setDropDateEdited(Boolean(finalDrop));
         setDropTimeEdited(Boolean(data.booking?.dropTime));
       } catch (err) {
-        console.log("Initialization Error:", err.response?.data || err);
+        console.log("Initialization Error:", err?.response?.data?.message || err?.message);
       } finally {
         setScreenLoading(false);
         setRefreshing(false);
@@ -799,7 +799,7 @@ export default function CreateBookingScreen() {
       );
       router.push("/(tabs)/new-booking");
     } catch (err) {
-      console.log(err.response?.data || err);
+      console.log("Error:", err?.response?.data?.message || err?.message);
       alert(
         err.response?.data?.message
           ? `${customerName ? `Customer: ${customerName}\n\n` : ""}${err.response.data.message}`

@@ -1201,7 +1201,7 @@ export default function BookingScreen() {
         Alert.alert("Success", "Booking cancelled successfully.");
         invalidateAndRefresh();
       } catch (error) {
-        console.log("Cancel booking error:", error?.response?.data || error);
+        console.log("Cancel booking error:", error?.response?.data?.message || error?.message);
         Alert.alert(
           "Error",
           error?.response?.data?.message || "Unable to cancel booking.",

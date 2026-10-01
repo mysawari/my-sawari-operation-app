@@ -253,7 +253,7 @@ export default function ManageVehiclesScreen() {
         }
       } catch (error) {
         if (myRequestId !== requestIdRef.current) return;
-        console.log("Vehicle fetch error:", error?.response?.data || error);
+        console.log("Vehicle fetch error:", error?.response?.data?.message || error?.message);
         // A silent background sync failing shouldn't interrupt the user
         // with a popup — they're already looking at good cached data.
         if (!silent) {
@@ -433,7 +433,7 @@ export default function ManageVehiclesScreen() {
               setVehicles((prev) => prev.filter((v) => v.id !== vehicleId));
               Alert.alert("Success", "Vehicle deleted successfully");
             } catch (error) {
-              console.log("Delete error:", error?.response?.data || error);
+              console.log("Delete error:", error?.response?.data?.message || error?.message);
               Alert.alert(
                 "Error",
                 error?.response?.data?.message || "Failed to delete vehicle",

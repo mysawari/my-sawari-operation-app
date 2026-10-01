@@ -276,7 +276,7 @@ export default function CreateBookingScreen() {
       });
       setVehicles(vehicleRes.data.data || []);
     } catch (err) {
-      console.log("Vehicle Fetch Error:", err.response?.data || err);
+      console.log("Vehicle Fetch Error:", err?.response?.data?.message || err?.message);
     } finally {
       setVehiclesLoading(false);
     }
@@ -389,7 +389,7 @@ export default function CreateBookingScreen() {
           ),
         );
       } catch (err) {
-        console.log("Initialization Error:", err.response?.data || err);
+        console.log("Initialization Error:", err?.response?.data?.message || err?.message);
       } finally {
         setScreenLoading(false);
         setRefreshing(false);
@@ -658,7 +658,7 @@ export default function CreateBookingScreen() {
       );
       router.back();
     } catch (err) {
-      console.log(err.response?.data || err);
+      console.log("Error:", err?.response?.data?.message || err?.message);
       alert(err.response?.data?.message || "Unable to create booking");
     } finally {
       setSubmitting(false);

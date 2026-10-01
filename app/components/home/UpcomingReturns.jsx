@@ -38,7 +38,7 @@ export default function UpcomingReturns() {
 
       setReturnsData(res.data.data || []);
     } catch (error) {
-      console.log("UPCOMING RETURNS ERROR:", error?.response?.data || error);
+      console.log("UPCOMING RETURNS ERROR:", error?.response?.data?.message || error?.message);
     } finally {
       setLoading(false);
     }

@@ -217,7 +217,7 @@ export default function AddVehicleScreen() {
       );
       router.back();
     } catch (error) {
-      console.log("CREATE VEHICLE ERROR:", error?.response?.data || error);
+      console.log("CREATE VEHICLE ERROR:", error?.response?.data?.message || error?.message);
       Alert.alert(
         "Error",
         error?.response?.data?.message || "Vehicle creation failed",

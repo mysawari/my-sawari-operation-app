@@ -513,7 +513,7 @@ export default function LeadDetailsScreen() {
         setBookings(res.data.data || []);
       }
     } catch (err) {
-      console.log(err.response?.data || err);
+      console.log("Error:", err?.response?.data?.message || err?.message);
     } finally {
       setBookingLoading(false);
     }
@@ -531,7 +531,7 @@ export default function LeadDetailsScreen() {
 
       showToast("Data refreshed");
     } catch (err) {
-      console.log(err);
+      console.log("Error:", err?.message);
     } finally {
       setRefreshing(false);
     }

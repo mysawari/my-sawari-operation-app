@@ -254,7 +254,7 @@ export default function ExtensionRequests() {
         setRequests(mapped.reverse());
       }
     } catch (err) {
-      console.log("Error fetching extensions:", err);
+      console.log("Error fetching extensions:", err?.message);
     } finally {
       setLoading(false);
     }
@@ -290,7 +290,7 @@ export default function ExtensionRequests() {
         router.push(`/components/activeRental/edit-rental?${queryParams.toString()}`);
       }
     } catch (err) {
-      console.log("Error updating status:", err);
+      console.log("Error updating status:", err?.message);
       Alert.alert("Error", "Could not update status.");
     }
   };
@@ -330,7 +330,7 @@ export default function ExtensionRequests() {
       setRejectModalVisible(false);
       setRejectItem(null);
     } catch (err) {
-      console.log("Error declining:", err);
+      console.log("Error declining:", err?.message);
       Alert.alert("Error", "Could not update status.");
     }
   };

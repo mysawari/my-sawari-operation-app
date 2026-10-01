@@ -856,7 +856,7 @@ export default function AddMaintenanceScreen() {
         setVehicleError("Unable to load vehicles");
       }
     } catch (error) {
-      console.log(error);
+      console.log("Vehicle load error:", error?.message);
       setVehicleError("Unable to load vehicles");
     } finally {
       setLoadingVehicles(false);
@@ -976,7 +976,7 @@ export default function AddMaintenanceScreen() {
         throw new Error(response.data.message || "Upload failed");
       }
     } catch (error) {
-      console.log("Image upload error:", error);
+      console.log("Image upload error:", error?.message);
       setImages((prev) =>
         prev.map((img) =>
           img.id === localId
@@ -1008,7 +1008,7 @@ export default function AddMaintenanceScreen() {
 
       await uploadImageAsset(result.assets[0]);
     } catch (error) {
-      console.log("Camera error:", error);
+      console.log("Camera error:", error?.message);
       Alert.alert("Error", "Unable to open camera. Please try again.");
     }
   };
@@ -1035,7 +1035,7 @@ export default function AddMaintenanceScreen() {
 
       await uploadImageAsset(result.assets[0]);
     } catch (error) {
-      console.log("Gallery error:", error);
+      console.log("Gallery error:", error?.message);
       Alert.alert("Error", "Unable to open photo library. Please try again.");
     }
   };
@@ -1104,7 +1104,7 @@ export default function AddMaintenanceScreen() {
         );
       }
     } catch (error) {
-      console.log(error);
+      console.log("Save maintenance error:", error?.message);
       setSaveError(
         error?.response?.data?.message ||
           "Unable to save maintenance request. Please try again.",

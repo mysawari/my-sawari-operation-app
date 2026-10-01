@@ -337,7 +337,7 @@ function NewBookingScreenInner() {
       const parsed = JSON.parse(bookingParam);
       return parsed && typeof parsed === "object" ? parsed : null;
     } catch (err) {
-      console.log("Booking Parse Error:", err);
+      console.log("Booking Parse Error:", err?.message);
       return null;
     }
   }, [bookingParam]);
@@ -642,7 +642,7 @@ function NewBookingScreenInner() {
             : "",
       );
     } catch (err) {
-      console.log("Error hydrating bookingData:", err);
+      console.log("Error hydrating bookingData:", err?.message);
     }
   }, [bookingData]);
 
@@ -680,7 +680,7 @@ function NewBookingScreenInner() {
             : "",
       );
     } catch (err) {
-      console.log("Error matching vehicle:", err);
+      console.log("Error matching vehicle:", err?.message);
     }
   }, [bookingData, vehicles]);
 
@@ -1069,7 +1069,7 @@ function NewBookingScreenInner() {
         },
       ]);
     } catch (error) {
-      console.log("Handover Create Error:", error?.response?.data || error);
+      console.log("Handover Create Error:", error?.response?.data?.message || error?.message);
       Alert.alert(
         "Error",
         error?.response?.data?.message || "Something went wrong",

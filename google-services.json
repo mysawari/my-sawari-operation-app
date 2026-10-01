@@ -15,7 +15,26 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "YOUR_API_KEY_HERE"
+          "current_key": "AIzaSyDP62rCUJTNl_6SGgYwR7GBZN7rMjFKAW8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:493361757272:android:4c2713493150d8d5fd5e2d",
+        "android_client_info": {
+          "package_name": "com.operation.mysawari"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDP62rCUJTNl_6SGgYwR7GBZN7rMjFKAW8"
         }
       ],
       "services": {

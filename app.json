@@ -18,7 +18,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.masudalom.mysawari",
+      "package": "com.operation.mysawari",
       "googleServicesFile": "./google-services.json"
     },
     "web": {

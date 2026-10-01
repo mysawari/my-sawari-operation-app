@@ -7,6 +7,11 @@ import useAuthStore from "../store/authStore";
 import messaging from "@react-native-firebase/messaging";
 import { Platform, PermissionsAndroid } from "react-native";
 
+// Register background handler early
+messaging().setBackgroundMessageHandler(async remoteMessage => {
+  console.log('Message handled in the background!', remoteMessage);
+});
+
 export default function RootLayout() {
   const token = useAuthStore((state) => state.token);
   const initialized = useAuthStore((state) => state.initialized);
@@ -51,6 +56,20 @@ export default function RootLayout() {
       };
       
       setupPushNotifications();
+
+      const unsubscribe = messaging().onMessage(async (remoteMessage) => {
+        console.log('A new FCM message arrived!', JSON.stringify(remoteMessage));
+        // Use Alert from react-native (make sure it's imported)
+        const { Alert } = require('react-native');
+        if (remoteMessage.notification) {
+          Alert.alert(
+            remoteMessage.notification.title || "New Notification",
+            remoteMessage.notification.body
+          );
+        }
+      });
+
+      return unsubscribe;
     }
   }, [token]);
 

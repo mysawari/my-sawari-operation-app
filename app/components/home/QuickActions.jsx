@@ -1,11 +1,27 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { quickActions } from "../../../constants/homeData";
 import colors from "../../../theme/colors";
+import { useCallback, useState } from "react";
+import api from "../../../services/api";
 
 export default function QuickActions() {
   const router = useRouter();
+  const [pendingExtensions, setPendingExtensions] = useState(0);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      api.get("/extensions").then((res) => {
+        if (active && res.data?.success) {
+          const pendingCount = res.data.data.filter(ext => ext.status === "pending").length;
+          setPendingExtensions(pendingCount);
+        }
+      }).catch(console.warn);
+      return () => { active = false; };
+    }, [])
+  );
 
   return (
     <View style={styles.container}>
@@ -14,6 +30,7 @@ export default function QuickActions() {
       <View style={styles.grid}>
         {quickActions.map((item) => {
           const Icon = item.icon;
+          const badgeCount = item.title === "Extension Requests" ? pendingExtensions : item.badge;
 
           return (
             <TouchableOpacity
@@ -30,6 +47,12 @@ export default function QuickActions() {
                 <Text style={styles.title}>{item.title}</Text>
                 <Text style={styles.subtitle}>{item.subtitle}</Text>
               </View>
+              
+              {badgeCount > 0 && (
+                <View style={styles.badgeWrap}>
+                  <Text style={styles.badgeText}>{badgeCount}</Text>
+                </View>
+              )}
 
               <Ionicons name="chevron-forward" size={20} color="#64748B" />
             </TouchableOpacity>
@@ -83,5 +106,17 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 14,
     lineHeight: 20,
+  },
+  badgeWrap: {
+    backgroundColor: "#DC2626",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginRight: 8,
+  },
+  badgeText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
   },
 });

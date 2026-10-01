@@ -1,6 +1,6 @@
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter, useFocusEffect } from "expo-router";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import {
     Alert,
     FlatList,
@@ -260,9 +260,11 @@ export default function ExtensionRequests() {
     }
   };
 
-  useEffect(() => {
-    fetchExtensions();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      fetchExtensions();
+    }, [])
+  );
 
   const counts = useMemo(
     () =>
@@ -320,9 +322,10 @@ export default function ExtensionRequests() {
   const confirmDecline = async () => {
     if (!rejectItem) return;
     try {
-      await api.put(`/extensions/${rejectItem.id}/status`, { status: "rejected", rejectReason });
+      const res = await api.put(`/extensions/${rejectItem.id}/status`, { status: "rejected", rejectReason });
+      const processedBy = res.data?.data?.processedBy?.name || "Unknown";
       setRequests((prev) =>
-        prev.map((r) => (r.id === rejectItem.id ? { ...r, status: "rejected" } : r)),
+        prev.map((r) => (r.id === rejectItem.id ? { ...r, status: "rejected", processedBy } : r)),
       );
       setRejectModalVisible(false);
       setRejectItem(null);

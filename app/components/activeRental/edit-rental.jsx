@@ -1596,7 +1596,8 @@ const styles = StyleSheet.create({
   keyboardAvoidingView: { flex: 1, backgroundColor: "#F8FAFC" },
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
   header: {
-    paddingVertical: 16,
+    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight + 16 : 16,
+    paddingBottom: 16,
     paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",

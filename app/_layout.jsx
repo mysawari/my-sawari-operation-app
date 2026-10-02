@@ -11,21 +11,26 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 import { Platform, PermissionsAndroid, Alert } from "react-native";
 import Constants from "expo-constants";
 
-import * as Notifications from 'expo-notifications';
-
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
-
-// Only require Firebase if not running in Expo Go
+// Only require Firebase and Notifications if not running in Expo Go
+// as expo-notifications Android push support was removed from Expo Go SDK 53
 let messaging = null;
+let Notifications = null;
 const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === 'storeClient';
 
 if (!isExpoGo) {
+  try {
+    Notifications = require('expo-notifications');
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      }),
+    });
+  } catch (e) {
+    console.warn("Expo notifications module not available", e);
+  }
+
   try {
     const messagingModule = require("@react-native-firebase/messaging");
     messaging = messagingModule.default || messagingModule;
@@ -102,14 +107,16 @@ export default function RootLayout() {
         console.log('A new FCM message arrived!', remoteMessage);
         
         // Show a local notification banner when the app is open
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: remoteMessage.notification?.title || remoteMessage.data?.title || "New Notification",
-            body: remoteMessage.notification?.body || remoteMessage.data?.body || "You have a new message.",
-            data: remoteMessage.data || {},
-          },
-          trigger: null,
-        });
+        if (Notifications) {
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: remoteMessage.notification?.title || remoteMessage.data?.title || "New Notification",
+              body: remoteMessage.notification?.body || remoteMessage.data?.body || "You have a new message.",
+              data: remoteMessage.data || {},
+            },
+            trigger: null,
+          });
+        }
       });
 
       return unsubscribe;

@@ -19,7 +19,11 @@ import {
 import api from "../../../services/api";
 import useAuthStore from "../../../store/authStore";
 
-const EXTERIOR_SHOTS = [
+/* ==========================
+   CAR PHOTOS (all required)
+========================== */
+
+const CAR_EXTERIOR_SHOTS = [
   {
     key: "vehicleFront",
     label: "Front View",
@@ -46,7 +50,7 @@ const EXTERIOR_SHOTS = [
   },
 ];
 
-const TYRE_TOOLKIT_SHOTS = [
+const CAR_TYRE_TOOLKIT_SHOTS = [
   {
     key: "tyreFrontLeft",
     label: "Front Left Tyre",
@@ -85,7 +89,65 @@ const TYRE_TOOLKIT_SHOTS = [
   },
 ];
 
-const ALL_REQUIRED_SHOTS = [...EXTERIOR_SHOTS, ...TYRE_TOOLKIT_SHOTS];
+/* ==========================
+   BIKE PHOTOS
+   Only the 4 exterior photos are required; the rest are optional.
+   Field names match the backend (tyreFront / tyreRear / helmet).
+========================== */
+
+const BIKE_EXTERIOR_SHOTS = [
+  {
+    key: "vehicleFront",
+    label: "Front View",
+    icon: "motorbike",
+    detail: "Headlight & number plate",
+  },
+  {
+    key: "vehicleRear",
+    label: "Rear View",
+    icon: "motorbike",
+    detail: "Tail light & number plate",
+  },
+  {
+    key: "vehicleLeft",
+    label: "Left Side",
+    icon: "motorbike",
+    detail: "Full left side",
+  },
+  {
+    key: "vehicleRight",
+    label: "Right Side",
+    icon: "motorbike",
+    detail: "Full right side",
+  },
+];
+
+const BIKE_OPTIONAL_SHOTS = [
+  {
+    key: "tyreFront",
+    label: "Front Tyre",
+    icon: "tire",
+    detail: "Tread & condition",
+  },
+  {
+    key: "tyreRear",
+    label: "Rear Tyre",
+    icon: "tire",
+    detail: "Tread & condition",
+  },
+  {
+    key: "helmet",
+    label: "Helmet",
+    icon: "racing-helmet",
+    detail: "Returned & condition",
+  },
+  {
+    key: "toolkit",
+    label: "Toolkit",
+    icon: "toolbox",
+    detail: "If provided",
+  },
+];
 
 const toFormFile = (uri, fallbackName) => {
   const cleanUri = Platform.OS === "ios" ? uri.replace("file://", "") : uri;
@@ -108,6 +170,8 @@ export default function ReceiveCarImageScreen() {
 
   const {
     handoverId,
+    vehicleCategory,
+    isBike: isBikeParam,
     fuelLevel,
     kilometersAtReturn,
     hasDamage,
@@ -129,26 +193,29 @@ export default function ReceiveCarImageScreen() {
     inspection,
   } = params;
 
-  const [shots, setShots] = useState({
-    vehicleFront: null,
-    vehicleRear: null,
-    vehicleLeft: null,
-    vehicleRight: null,
-    tyreFrontLeft: null,
-    tyreFrontRight: null,
-    tyreRearLeft: null,
-    tyreRearRight: null,
-    spareTyre: null,
-    toolkit: null,
-  });
+  // Category comes from the previous screen, which read it from
+  // vehicle.category in the /handover/single/:id response.
+  const isBike =
+    String(vehicleCategory || "").toLowerCase() === "bike" ||
+    isBikeParam === "yes";
+
+  // Required photos block submit; optional photos are sent only if taken.
+  const exteriorShots = isBike ? BIKE_EXTERIOR_SHOTS : CAR_EXTERIOR_SHOTS;
+  const secondaryShots = isBike ? BIKE_OPTIONAL_SHOTS : CAR_TYRE_TOOLKIT_SHOTS;
+  const secondaryRequired = !isBike;
+
+  const requiredShots = secondaryRequired
+    ? [...exteriorShots, ...secondaryShots]
+    : exteriorShots;
+  const optionalShots = secondaryRequired ? [] : secondaryShots;
+
+  const [shots, setShots] = useState({});
 
   const [additionalImages, setAdditionalImages] = useState([]);
   const [submitting, setSubmitting] = useState(false);
 
   // Guards against a photo tile being tapped again while the camera from
-  // the previous tap is still opening/resolving. Without this, a fast
-  // double-tap can fire launchCameraAsync twice concurrently, which is a
-  // common source of native picker crashes and duplicate captures.
+  // the previous tap is still opening/resolving (double-tap crash).
   const [capturingKey, setCapturingKey] = useState(null);
   const isCapturing = capturingKey !== null;
 
@@ -162,37 +229,33 @@ export default function ReceiveCarImageScreen() {
 
   const isDamaged = hasDamage === "yes";
 
-  // FIX: `ImagePicker.MediaTypeOptions` is the deprecated enum-based API
-  // and has been removed in current expo-image-picker releases, so
-  // `ImagePicker.MediaTypeOptions.Images` evaluated to `undefined.Images`
-  // and threw the instant a photo tile was tapped — that was the crash.
-  // Replaced with the current string-array form (`mediaTypes: ["images"]`)
-  // and wrapped in try/catch so a picker/permission failure shows an
-  // alert instead of crashing the screen.
+  const openCamera = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(
+        "Permission Required",
+        "Camera access is required to take vehicle photos.",
+      );
+      return null;
+    }
+    // Straight to capture, no crop screen, default camera ratio.
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["images"],
+      quality: 0.7,
+    });
+    if (!result.canceled && result.assets?.length) {
+      return result.assets[0].uri;
+    }
+    return null;
+  };
+
   const captureShot = async (key) => {
     if (isCapturing) return;
 
     try {
       setCapturingKey(key);
-
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          "Permission Required",
-          "Camera access is required to take vehicle photos.",
-        );
-        return;
-      }
-      // Camera opens straight to capture, no crop screen, and the photo
-      // keeps the camera's default capture ratio instead of being forced
-      // into a fixed aspect.
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ["images"],
-        quality: 0.7,
-      });
-      if (!result.canceled && result.assets?.length) {
-        setShots((prev) => ({ ...prev, [key]: result.assets[0].uri }));
-      }
+      const uri = await openCamera();
+      if (uri) setShots((prev) => ({ ...prev, [key]: uri }));
     } catch (error) {
       Alert.alert("Error", "Unable to capture the photo. Please try again.");
     } finally {
@@ -200,28 +263,21 @@ export default function ReceiveCarImageScreen() {
     }
   };
 
+  const removeShot = (key) => {
+    setShots((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
   const captureAdditionalImage = async () => {
     if (isCapturing) return;
 
     try {
       setCapturingKey("additional");
-
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          "Permission Required",
-          "Camera access is required to take vehicle photos.",
-        );
-        return;
-      }
-      // Same as above — no crop step, default camera ratio.
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ["images"],
-        quality: 0.7,
-      });
-      if (!result.canceled && result.assets?.length) {
-        setAdditionalImages((prev) => [...prev, result.assets[0].uri]);
-      }
+      const uri = await openCamera();
+      if (uri) setAdditionalImages((prev) => [...prev, uri]);
     } catch (error) {
       Alert.alert("Error", "Unable to capture the photo. Please try again.");
     } finally {
@@ -233,15 +289,15 @@ export default function ReceiveCarImageScreen() {
     setAdditionalImages((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const completedCount = ALL_REQUIRED_SHOTS.filter(
+  const requiredCompletedCount = requiredShots.filter(
     (s) => !!shots[s.key],
   ).length;
-  const allRequiredCaptured = completedCount === ALL_REQUIRED_SHOTS.length;
+  const allRequiredCaptured = requiredCompletedCount === requiredShots.length;
 
-  const exteriorCompletedCount = EXTERIOR_SHOTS.filter(
+  const exteriorCompletedCount = exteriorShots.filter(
     (s) => !!shots[s.key],
   ).length;
-  const tyreToolkitCompletedCount = TYRE_TOOLKIT_SHOTS.filter(
+  const secondaryCompletedCount = secondaryShots.filter(
     (s) => !!shots[s.key],
   ).length;
 
@@ -249,7 +305,9 @@ export default function ReceiveCarImageScreen() {
     if (!allRequiredCaptured) {
       Alert.alert(
         "Missing Photos",
-        "Please capture all mandatory vehicle photos (exterior angles, tyres, and toolkit) before submitting.",
+        isBike
+          ? "Please capture the front, rear, left and right photos of the bike before submitting."
+          : "Please capture all mandatory vehicle photos (exterior angles, tyres, and toolkit) before submitting.",
       );
       return;
     }
@@ -288,13 +346,23 @@ export default function ReceiveCarImageScreen() {
       formData.append("maintenanceReason", maintenanceReason || "");
       formData.append("maintenanceDays", String(maintenanceDays ?? ""));
 
-      ALL_REQUIRED_SHOTS.forEach(({ key }) => {
+      // Required photos — all present (checked above).
+      requiredShots.forEach(({ key }) => {
         formData.append(key, toFormFile(shots[key], key));
       });
 
-      capturedDamageImages.forEach((uri, index) => {
-        formData.append("damageImages", toFormFile(uri, `damage_${index}`));
+      // Optional photos — only the ones actually taken.
+      optionalShots.forEach(({ key }) => {
+        if (shots[key]) {
+          formData.append(key, toFormFile(shots[key], key));
+        }
       });
+
+      if (isDamaged) {
+        capturedDamageImages.forEach((uri, index) => {
+          formData.append("damageImages", toFormFile(uri, `damage_${index}`));
+        });
+      }
 
       additionalImages.forEach((uri, index) => {
         formData.append(
@@ -312,7 +380,9 @@ export default function ReceiveCarImageScreen() {
 
       Alert.alert(
         "Return Completed",
-        "Vehicle return has been recorded successfully.",
+        isBike
+          ? "Bike return has been recorded successfully."
+          : "Vehicle return has been recorded successfully.",
         [
           {
             text: "Done",
@@ -331,7 +401,7 @@ export default function ReceiveCarImageScreen() {
     }
   };
 
-  const renderShotGrid = (shotList) => (
+  const renderShotGrid = (shotList, { optional = false } = {}) => (
     <View style={styles.shotGrid}>
       {shotList.map(({ key, label, icon, detail }) => {
         const uri = shots[key];
@@ -350,6 +420,16 @@ export default function ReceiveCarImageScreen() {
                     />
                     <Text style={styles.completedBadgeText}>Captured</Text>
                   </View>
+                  {optional && (
+                    <TouchableOpacity
+                      style={styles.removeShotBadge}
+                      onPress={() => removeShot(key)}
+                      disabled={isCapturing}
+                      hitSlop={6}
+                    >
+                      <Ionicons name="close" size={14} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  )}
                 </View>
                 <TouchableOpacity
                   style={[
@@ -372,6 +452,7 @@ export default function ReceiveCarImageScreen() {
               <TouchableOpacity
                 style={[
                   styles.placeholderCard,
+                  optional && styles.placeholderCardOptional,
                   tileCapturing && { opacity: 0.6 },
                 ]}
                 activeOpacity={0.7}
@@ -385,15 +466,34 @@ export default function ReceiveCarImageScreen() {
                     <MaterialCommunityIcons
                       name={icon}
                       size={28}
-                      color="#2563EB"
+                      color={optional ? "#64748B" : "#2563EB"}
                     />
-                    <View style={styles.cameraBadgeIcon}>
+                    <View
+                      style={[
+                        styles.cameraBadgeIcon,
+                        optional && { backgroundColor: "#64748B" },
+                      ]}
+                    >
                       <Ionicons name="camera" size={12} color="#FFFFFF" />
                     </View>
                   </View>
                 )}
-                <Text style={styles.placeholderLabel}>{label}</Text>
-                <Text style={styles.placeholderDetail}>{detail}</Text>
+                <Text
+                  style={[
+                    styles.placeholderLabel,
+                    optional && { color: "#334155" },
+                  ]}
+                >
+                  {label}
+                </Text>
+                <Text
+                  style={[
+                    styles.placeholderDetail,
+                    optional && { color: "#94A3B8" },
+                  ]}
+                >
+                  {optional ? `Optional · ${detail}` : detail}
+                </Text>
               </TouchableOpacity>
             )}
           </View>
@@ -416,7 +516,9 @@ export default function ReceiveCarImageScreen() {
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
         </TouchableOpacity>
         <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>Vehicle Photos</Text>
+          <Text style={styles.headerTitle}>
+            {isBike ? "Bike Photos" : "Vehicle Photos"}
+          </Text>
           <Text style={styles.headerSubtitle}>
             Step 2 of 2 • Inspection Audit
           </Text>
@@ -428,7 +530,7 @@ export default function ReceiveCarImageScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Exterior Photos Section */}
+        {/* Exterior Photos Section (required for car & bike) */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <View style={styles.cardHeaderTitleRow}>
@@ -443,67 +545,85 @@ export default function ReceiveCarImageScreen() {
             <View
               style={[
                 styles.progressBadge,
-                exteriorCompletedCount === EXTERIOR_SHOTS.length &&
+                exteriorCompletedCount === exteriorShots.length &&
                   styles.progressBadgeComplete,
               ]}
             >
               <Text
                 style={[
                   styles.progressBadgeText,
-                  exteriorCompletedCount === EXTERIOR_SHOTS.length &&
+                  exteriorCompletedCount === exteriorShots.length &&
                     styles.progressBadgeTextComplete,
                 ]}
               >
-                {exteriorCompletedCount}/{EXTERIOR_SHOTS.length} Done
+                {exteriorCompletedCount}/{exteriorShots.length} Done
               </Text>
             </View>
           </View>
 
           <Text style={styles.cardDescription}>
-            Take clear photos of all four angles of the vehicle to document
-            return condition.
+            {isBike
+              ? "Take clear photos of the front, rear, left and right of the bike to document return condition."
+              : "Take clear photos of all four angles of the vehicle to document return condition."}
           </Text>
 
-          {renderShotGrid(EXTERIOR_SHOTS)}
+          {renderShotGrid(exteriorShots)}
         </View>
 
-        {/* Tyre & Toolkit Photos Section */}
+        {/* Car: Tyre & Toolkit (required) | Bike: Tyres, Helmet & Toolkit (optional) */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <View style={styles.cardHeaderTitleRow}>
               <MaterialCommunityIcons
-                name="car-tire-alert"
+                name={isBike ? "tire" : "car-tire-alert"}
                 size={22}
-                color="#1E40AF"
+                color={secondaryRequired ? "#1E40AF" : "#475569"}
               />
-              <Text style={styles.cardTitle}>Tyre & Toolkit Photos</Text>
-              <Text style={styles.requiredAsterisk}>*</Text>
+              <Text style={styles.cardTitle}>
+                {isBike ? "Tyres, Helmet & Toolkit" : "Tyre & Toolkit Photos"}
+              </Text>
+              {secondaryRequired ? (
+                <Text style={styles.requiredAsterisk}>*</Text>
+              ) : (
+                <View style={styles.optionalPill}>
+                  <Text style={styles.optionalPillText}>Optional</Text>
+                </View>
+              )}
             </View>
-            <View
-              style={[
-                styles.progressBadge,
-                tyreToolkitCompletedCount === TYRE_TOOLKIT_SHOTS.length &&
-                  styles.progressBadgeComplete,
-              ]}
-            >
-              <Text
+            {secondaryRequired ? (
+              <View
                 style={[
-                  styles.progressBadgeText,
-                  tyreToolkitCompletedCount === TYRE_TOOLKIT_SHOTS.length &&
-                    styles.progressBadgeTextComplete,
+                  styles.progressBadge,
+                  secondaryCompletedCount === secondaryShots.length &&
+                    styles.progressBadgeComplete,
                 ]}
               >
-                {tyreToolkitCompletedCount}/{TYRE_TOOLKIT_SHOTS.length} Done
-              </Text>
-            </View>
+                <Text
+                  style={[
+                    styles.progressBadgeText,
+                    secondaryCompletedCount === secondaryShots.length &&
+                      styles.progressBadgeTextComplete,
+                  ]}
+                >
+                  {secondaryCompletedCount}/{secondaryShots.length} Done
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.progressBadge}>
+                <Text style={styles.progressBadgeText}>
+                  {secondaryCompletedCount} Added
+                </Text>
+              </View>
+            )}
           </View>
 
           <Text style={styles.cardDescription}>
-            Capture all four tyres, the spare tyre, and the toolkit to confirm
-            they're present and in good condition.
+            {isBike
+              ? "Add these if useful — they're not needed to submit the return."
+              : "Capture all four tyres, the spare tyre, and the toolkit to confirm they're present and in good condition."}
           </Text>
 
-          {renderShotGrid(TYRE_TOOLKIT_SHOTS)}
+          {renderShotGrid(secondaryShots, { optional: !secondaryRequired })}
         </View>
 
         {/* Damage Evidence Section */}
@@ -625,7 +745,7 @@ export default function ReceiveCarImageScreen() {
                 color="#FFFFFF"
               />
               <Text style={styles.primarySubmitBtnText}>
-                Submit Vehicle Return
+                {isBike ? "Submit Bike Return" : "Submit Vehicle Return"}
               </Text>
             </View>
           )}
@@ -702,17 +822,30 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    flexShrink: 1,
   },
   cardTitle: {
     fontSize: 15,
     fontWeight: "700",
     color: "#0F172A",
+    flexShrink: 1,
   },
   requiredAsterisk: {
     color: "#EF4444",
     fontSize: 16,
     fontWeight: "700",
     marginLeft: -4,
+  },
+  optionalPill: {
+    backgroundColor: "#F1F5F9",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  optionalPillText: {
+    fontSize: 10.5,
+    fontWeight: "700",
+    color: "#64748B",
   },
   cardDescription: {
     fontSize: 13,
@@ -758,6 +891,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 8,
   },
+  placeholderCardOptional: {
+    borderColor: "#CBD5E1",
+    backgroundColor: "#F8FAFC",
+  },
   placeholderIconContainer: {
     position: "relative",
     marginBottom: 6,
@@ -800,7 +937,8 @@ const styles = StyleSheet.create({
     left: 6,
     right: 6,
     flexDirection: "row",
-    justifyContent: "flex-start",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   completedBadge: {
     flexDirection: "row",
@@ -815,6 +953,14 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     color: "#15803D",
+  },
+  removeShotBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(239, 68, 68, 0.95)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   retakeButton: {
     position: "absolute",

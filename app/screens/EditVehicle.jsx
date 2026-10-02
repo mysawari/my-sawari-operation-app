@@ -7,9 +7,12 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   Alert,
+  Dimensions,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
+  Pressable,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -24,6 +27,19 @@ import useAuthStore from "../../store/authStore";
 
 // Must match the maxlength on the backend model / controller.
 const DISPLAY_NAME_MAX_LENGTH = 100;
+
+const SCREEN_WIDTH = Dimensions.get("window").width;
+const SCREEN_HEIGHT = Dimensions.get("window").height;
+
+// Shared options for both camera and gallery.
+// `mediaTypes: ["images"]` replaces the deprecated
+// `ImagePicker.MediaTypeOptions.Images`.
+const IMAGE_PICKER_OPTIONS = {
+  mediaTypes: ["images"],
+  allowsEditing: true,
+  aspect: [4, 3],
+  quality: 0.8,
+};
 
 const InputField = ({
   label,
@@ -178,6 +194,12 @@ export default function EditVehicleScreen() {
   // Images
   const [images, setImages] = useState([null, null, null, null, null]);
 
+  // Image source sheet (camera / gallery) - holds the slot index, or null.
+  const [imageSheetIndex, setImageSheetIndex] = useState(null);
+
+  // Full-screen preview - holds the slot index, or null.
+  const [previewIndex, setPreviewIndex] = useState(null);
+
   useEffect(() => {
     if (vehicleId && token) {
       fetchVehicleDetails();
@@ -312,20 +334,116 @@ export default function EditVehicleScreen() {
     }
   };
 
-  const pickImage = async (index) => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 1,
+  // ---------------------------------------------------------------------------
+  // IMAGES
+  // ---------------------------------------------------------------------------
+
+  const setImageAt = (index, uri) => {
+    setImages((prev) => {
+      const updated = [...prev];
+      updated[index] = uri;
+      return updated;
     });
+  };
 
-    if (!result.canceled) {
-      const updated = [...images];
-
-      updated[index] = result.assets[0].uri;
-
-      setImages(updated);
+  // Empty slot -> choose source. Filled slot -> open full preview.
+  const handleImageSlotPress = (index) => {
+    if (images[index]) {
+      setPreviewIndex(index);
+    } else {
+      setImageSheetIndex(index);
     }
+  };
+
+  // Close the sheet first, then launch the camera / gallery.
+  // iOS can't present the picker while a Modal is still animating out.
+  const runAfterSheetCloses = (action) => {
+    const index = imageSheetIndex;
+    setImageSheetIndex(null);
+
+    if (index === null) return;
+
+    setTimeout(() => action(index), Platform.OS === "ios" ? 450 : 150);
+  };
+
+  const takePhoto = async (index) => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+
+      if (status !== "granted") {
+        Alert.alert(
+          "Camera Permission Needed",
+          "Allow camera access in your device settings to take vehicle photos.",
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync(IMAGE_PICKER_OPTIONS);
+
+      if (!result.canceled && result.assets?.length) {
+        setImageAt(index, result.assets[0].uri);
+      }
+    } catch (error) {
+      console.log("CAMERA ERROR:", error?.message);
+      Alert.alert("Error", "Could not open the camera.");
+    }
+  };
+
+  const pickFromGallery = async (index) => {
+    try {
+      const result =
+        await ImagePicker.launchImageLibraryAsync(IMAGE_PICKER_OPTIONS);
+
+      if (!result.canceled && result.assets?.length) {
+        setImageAt(index, result.assets[0].uri);
+      }
+    } catch (error) {
+      console.log("GALLERY ERROR:", error?.message);
+      Alert.alert("Error", "Could not open the gallery.");
+    }
+  };
+
+  // Indexes of slots that currently hold an image (for preview navigation).
+  const filledImageIndexes = images
+    .map((uri, i) => (uri ? i : null))
+    .filter((i) => i !== null);
+
+  const previewPosition =
+    previewIndex !== null ? filledImageIndexes.indexOf(previewIndex) : -1;
+
+  const showPrevImage = () => {
+    if (previewPosition > 0) {
+      setPreviewIndex(filledImageIndexes[previewPosition - 1]);
+    }
+  };
+
+  const showNextImage = () => {
+    if (previewPosition < filledImageIndexes.length - 1) {
+      setPreviewIndex(filledImageIndexes[previewPosition + 1]);
+    }
+  };
+
+  const replacePreviewImage = () => {
+    const index = previewIndex;
+    setPreviewIndex(null);
+
+    setTimeout(() => setImageSheetIndex(index), 300);
+  };
+
+  const removePreviewImage = () => {
+    const index = previewIndex;
+
+    Alert.alert("Remove Photo", "Remove this photo from the vehicle?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: () => {
+          setImageAt(index, null);
+          setPreviewIndex(null);
+        },
+      },
+    ]);
   };
 
   // Switching away from "car" clears any previously-selected car body type
@@ -762,20 +880,32 @@ export default function EditVehicleScreen() {
 
             <SectionTitle title="Vehicle Images" />
 
+            <Text style={styles.imageHint}>
+              Tap an empty slot to take or choose a photo. Tap a photo to view,
+              replace, or remove it.
+            </Text>
+
             <View style={styles.imageRow}>
               {images.map((img, index) => (
                 <TouchableOpacity
                   key={index}
-                  style={styles.imageSlot}
-                  onPress={() => pickImage(index)}
+                  style={[styles.imageSlot, img && styles.imageSlotFilled]}
+                  onPress={() => handleImageSlotPress(index)}
+                  activeOpacity={0.8}
                 >
                   {img ? (
-                    <Image source={{ uri: img }} style={styles.preview} />
+                    <>
+                      <Image source={{ uri: img }} style={styles.preview} />
+
+                      <View style={styles.expandBadge}>
+                        <Ionicons name="expand-outline" size={10} color="white" />
+                      </View>
+                    </>
                   ) : (
                     <>
                       <Ionicons
-                        name="image-outline"
-                        size={24}
+                        name="camera-outline"
+                        size={22}
                         color="#94A3B8"
                       />
 
@@ -949,6 +1079,140 @@ export default function EditVehicleScreen() {
           />
         )}
       </KeyboardAvoidingView>
+
+      {/* IMAGE SOURCE SHEET (Camera / Gallery) */}
+      <Modal
+        visible={imageSheetIndex !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setImageSheetIndex(null)}
+      >
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setImageSheetIndex(null)}
+        >
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <View style={styles.sheetHandle} />
+
+            <Text style={styles.sheetTitle}>
+              Add photo {imageSheetIndex !== null ? imageSheetIndex + 1 : ""}
+            </Text>
+            <Text style={styles.sheetSub}>
+              Take a new photo or pick one from your gallery
+            </Text>
+
+            <TouchableOpacity
+              style={styles.sheetOption}
+              onPress={() => runAfterSheetCloses(takePhoto)}
+            >
+              <View style={[styles.sheetIcon, { backgroundColor: "#FEF3C7" }]}>
+                <Ionicons name="camera" size={22} color="#B45309" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sheetOptionTitle}>Take photo</Text>
+                <Text style={styles.sheetOptionSub}>Use the camera</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.sheetOption}
+              onPress={() => runAfterSheetCloses(pickFromGallery)}
+            >
+              <View style={[styles.sheetIcon, { backgroundColor: "#E0E7FF" }]}>
+                <Ionicons name="images" size={22} color="#1E3A8A" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sheetOptionTitle}>Choose from gallery</Text>
+                <Text style={styles.sheetOptionSub}>Pick an existing photo</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.sheetCancel}
+              onPress={() => setImageSheetIndex(null)}
+            >
+              <Text style={styles.sheetCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* FULL-SCREEN IMAGE PREVIEW */}
+      <Modal
+        visible={previewIndex !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPreviewIndex(null)}
+      >
+        <View style={styles.previewContainer}>
+          <StatusBar barStyle="light-content" backgroundColor="#000" />
+
+          <View style={styles.previewHeader}>
+            <TouchableOpacity
+              style={styles.previewCloseBtn}
+              onPress={() => setPreviewIndex(null)}
+            >
+              <Ionicons name="close" size={24} color="white" />
+            </TouchableOpacity>
+
+            <Text style={styles.previewCounter}>
+              {previewPosition + 1} / {filledImageIndexes.length}
+            </Text>
+
+            <View style={{ width: 42 }} />
+          </View>
+
+          <View style={styles.previewImageWrap}>
+            {previewIndex !== null && images[previewIndex] && (
+              <Image
+                source={{ uri: images[previewIndex] }}
+                style={styles.previewImage}
+                resizeMode="contain"
+              />
+            )}
+
+            {previewPosition > 0 && (
+              <TouchableOpacity
+                style={[styles.previewNav, { left: 12 }]}
+                onPress={showPrevImage}
+              >
+                <Ionicons name="chevron-back" size={26} color="white" />
+              </TouchableOpacity>
+            )}
+
+            {previewPosition < filledImageIndexes.length - 1 && (
+              <TouchableOpacity
+                style={[styles.previewNav, { right: 12 }]}
+                onPress={showNextImage}
+              >
+                <Ionicons name="chevron-forward" size={26} color="white" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.previewActions}>
+            <TouchableOpacity
+              style={styles.previewActionBtn}
+              onPress={replacePreviewImage}
+            >
+              <Ionicons name="swap-horizontal" size={20} color="#111827" />
+              <Text style={styles.previewActionText}>Replace</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.previewActionBtn, styles.previewRemoveBtn]}
+              onPress={removePreviewImage}
+            >
+              <Ionicons name="trash-outline" size={20} color="white" />
+              <Text style={[styles.previewActionText, { color: "white" }]}>
+                Remove
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1107,6 +1371,12 @@ const styles = StyleSheet.create({
     color: "#64748B",
     marginTop: 4,
   },
+  imageHint: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: -6,
+    marginBottom: 12,
+  },
   imageRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1121,6 +1391,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
+  },
+  imageSlotFilled: {
+    borderStyle: "solid",
+    borderColor: "#FFC107",
+    borderWidth: 1.5,
   },
   addPhoto: {
     fontSize: 9,
@@ -1130,7 +1406,18 @@ const styles = StyleSheet.create({
   preview: {
     width: "100%",
     height: "100%",
-    borderRadius: 14,
+    borderRadius: 12,
+  },
+  expandBadge: {
+    position: "absolute",
+    bottom: 4,
+    right: 4,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "rgba(10,22,40,0.7)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   noticeBox: {
     height: 56,
@@ -1221,5 +1508,150 @@ const styles = StyleSheet.create({
     color: "#111827",
     fontSize: 16,
     fontWeight: "800",
+  },
+
+  // Image source sheet
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(10,22,40,0.5)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: "white",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === "ios" ? 36 : 20,
+  },
+  sheetHandle: {
+    alignSelf: "center",
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#E2E8F0",
+    marginBottom: 16,
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827",
+  },
+  sheetSub: {
+    fontSize: 13,
+    color: "#64748B",
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  sheetOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 16,
+    marginBottom: 10,
+  },
+  sheetIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sheetOptionTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  sheetOptionSub: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 2,
+  },
+  sheetCancel: {
+    height: 52,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 4,
+  },
+  sheetCancelText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0F2554",
+  },
+
+  // Full-screen preview
+  previewContainer: {
+    flex: 1,
+    backgroundColor: "#000",
+  },
+  previewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: Platform.OS === "android" ? 40 : 56,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  previewCloseBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  previewCounter: {
+    color: "white",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  previewImageWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  previewImage: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT * 0.65,
+  },
+  previewNav: {
+    position: "absolute",
+    top: "50%",
+    marginTop: -22,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  previewActions: {
+    flexDirection: "row",
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === "ios" ? 40 : 24,
+  },
+  previewActionBtn: {
+    flex: 1,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: "#FFC107",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  previewRemoveBtn: {
+    backgroundColor: "#EF4444",
+  },
+  previewActionText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111827",
   },
 });

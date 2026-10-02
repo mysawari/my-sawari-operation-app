@@ -24,10 +24,15 @@ import {
 import api from "../../../services/api";
 import useAuthStore from "../../../store/authStore";
 
-const inspectionItems = [
+// ── INSPECTION CHECKLISTS ────────────────────────────────────────────────
+// Car and bike have separate checklists. Bike ids start at 101 so a bike
+// check can never collide with a car check in the `checks` state.
+const CAR_INSPECTION_ITEMS = [
   { id: 1, label: "Exterior Body", icon: "car-outline" },
   { id: 2, label: "Brakes", icon: "disc-outline" },
-  { id: 3, label: "Interior Condition", icon: "car-seat" },
+  // Was "car-seat" (a MaterialCommunityIcons name) which rendered as "?"
+  // under Ionicons.
+  { id: 3, label: "Interior Condition", icon: "grid-outline" },
   { id: 4, label: "AC & Heater", icon: "snow-outline" },
   { id: 5, label: "Tyres Condition", icon: "ellipse-outline" },
   { id: 6, label: "Wipers", icon: "rainy-outline" },
@@ -36,6 +41,42 @@ const inspectionItems = [
   { id: 9, label: "Engine Condition", icon: "construct-outline" },
   { id: 10, label: "Windows & Mirrors", icon: "albums-outline" },
 ];
+
+const BIKE_INSPECTION_ITEMS = [
+  { id: 101, label: "Body & Panels", icon: "bicycle-outline" },
+  { id: 102, label: "Front & Rear Brakes", icon: "disc-outline" },
+  { id: 103, label: "Tyres Condition", icon: "ellipse-outline" },
+  { id: 104, label: "Chain & Sprocket", icon: "link-outline" },
+  { id: 105, label: "Clutch & Throttle", icon: "hand-left-outline" },
+  { id: 106, label: "Lights & Indicators", icon: "sunny-outline" },
+  { id: 107, label: "Horn", icon: "volume-high-outline" },
+  { id: 108, label: "Engine Condition", icon: "construct-outline" },
+  { id: 109, label: "Mirrors", icon: "albums-outline" },
+  { id: 110, label: "Speedometer / Console", icon: "speedometer-outline" },
+  { id: 111, label: "Seat & Footrests", icon: "remove-outline" },
+  { id: 112, label: "Helmet Returned", icon: "shield-outline" },
+];
+
+// /handover/single/:id already populates `vehicle.vehicleId` with the
+// full Vehicle document, so the category comes straight from the DB
+// field `Vehicle.category` ("car" | "bike"). `data.vehicleCategory` is the
+// same value computed by the backend; either one is enough.
+const getVehicleFromHandover = (data) =>
+  data?.vehicle?.vehicleId && typeof data.vehicle.vehicleId === "object"
+    ? data.vehicle.vehicleId
+    : data?.vehicle || null;
+
+const getVehicleCategory = (data) => {
+  const fromVehicle = String(getVehicleFromHandover(data)?.category || "")
+    .toLowerCase()
+    .trim();
+  if (fromVehicle === "bike" || fromVehicle === "car") return fromVehicle;
+
+  const fromApi = String(data?.vehicleCategory || "").toLowerCase().trim();
+  if (fromApi === "bike" || fromApi === "car") return fromApi;
+
+  return "car";
+};
 
 const ALL_CONDITIONS = ["good", "minor", "major"];
 const ALL_LABELS = { good: "Good", minor: "Minor", major: "Major" };
@@ -192,24 +233,21 @@ export default function ReceiveCarDetailScreen() {
 
   useEffect(() => () => clearTimeout(copyTimerRef.current), []);
 
-  // No pre-filled checks or notes — exec must select manually
-  const [checks, setChecks] = useState({
-    1: null,
-    2: null,
-    3: null,
-    4: null,
-    5: null,
-    6: null,
-    7: null,
-    8: null,
-    9: null,
-    10: null,
-  });
+  // No pre-filled checks or notes — exec must select manually.
+  // Starts empty because the checklist (car vs bike) is only known after
+  // the handover loads; an undefined entry means "not selected yet".
+  const [checks, setChecks] = useState({});
   const [itemNotes, setItemNotes] = useState({});
 
   // Generate a random session salt once per screen mount so button order
   // is different every time the screen becomes visible
   const sessionSalt = useMemo(() => Math.floor(Math.random() * 0xffffff), []);
+
+  // Car vs bike — decides which checklist and labels to show.
+  const vehicle = getVehicleFromHandover(handoverData);
+  const vehicleCategory = getVehicleCategory(handoverData);
+  const isBike = vehicleCategory === "bike";
+  const inspectionItems = isBike ? BIKE_INSPECTION_ITEMS : CAR_INSPECTION_ITEMS;
 
   const formatDate = (date) => {
     if (!date) return "-";
@@ -237,7 +275,7 @@ export default function ReceiveCarDetailScreen() {
       );
     });
     return orders;
-  }, [sessionSalt]);
+  }, [sessionSalt, inspectionItems]);
 
   useEffect(() => {
     if (handoverId && token) {
@@ -305,19 +343,26 @@ export default function ReceiveCarDetailScreen() {
     setUpiReferences((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // FIX: `ImagePicker.MediaTypeOptions` is removed in current
+  // expo-image-picker and crashes on tap. Use the string-array form and
+  // catch picker/permission failures instead of crashing the screen.
   const triggerCamera = async () => {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert("Permission required", "Camera access required");
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.5,
-      allowsEditing: true,
-    });
-    if (!result.canceled) {
-      setDamageImages((prev) => [...prev, result.assets[0].uri]);
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Permission required", "Camera access required");
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        quality: 0.5,
+        allowsEditing: true,
+      });
+      if (!result.canceled && result.assets?.length) {
+        setDamageImages((prev) => [...prev, result.assets[0].uri]);
+      }
+    } catch {
+      Alert.alert("Error", "Unable to capture the photo. Please try again.");
     }
   };
 
@@ -325,7 +370,9 @@ export default function ReceiveCarDetailScreen() {
     setDamageImages((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const damageAmount = parseFloat(repairEstimate) || 0;
+  // FIX: a repair estimate typed in and then left behind after switching
+  // damage back to "No" must not be added to the bill.
+  const damageAmount = damage === "yes" ? parseFloat(repairEstimate) || 0 : 0;
   const lateFine = parseFloat(lateReturnFine) || 0;
   const kmFine = parseFloat(extraKmFine) || 0;
   const fuelFine = parseFloat(fuelUsageAmount) || 0;
@@ -449,11 +496,16 @@ export default function ReceiveCarDetailScreen() {
         Alert.alert("Validation", "Please enter repair duration");
         return;
       }
-      if (needsMaintenance === "yes" && !maintenanceReason.trim()) {
+    }
+
+    // FIX: maintenance checks used to run only when damage was "yes", so
+    // maintenance could be submitted with no reason/days otherwise.
+    if (needsMaintenance === "yes") {
+      if (!maintenanceReason.trim()) {
         Alert.alert("Validation", "Please enter maintenance reason");
         return;
       }
-      if (needsMaintenance === "yes" && !maintenanceDays) {
+      if (!maintenanceDays || toNum(maintenanceDays) <= 0) {
         Alert.alert("Validation", "Please enter estimated repair days");
         return;
       }
@@ -469,13 +521,15 @@ export default function ReceiveCarDetailScreen() {
       pathname: "/components/receiveCar/image",
       params: {
         handoverId,
+        vehicleCategory,
+        isBike: isBike ? "yes" : "no",
         fuelLevel,
         kilometersAtReturn: kms,
         hasDamage: damage,
-        damageNotes,
-        damageImages: JSON.stringify(damageImages),
-        repairEstimate,
-        repairDays,
+        damageNotes: damage === "yes" ? damageNotes : "",
+        damageImages: JSON.stringify(damage === "yes" ? damageImages : []),
+        repairEstimate: damage === "yes" ? repairEstimate : "",
+        repairDays: damage === "yes" ? repairDays : "",
         lateReturnFine,
         extraKmFine,
         fuelUsageAmount,
@@ -538,7 +592,6 @@ export default function ReceiveCarDetailScreen() {
     );
   };
 
-  const vehicle = handoverData?.vehicle?.vehicleId || handoverData?.vehicle;
   const customer = handoverData?.customer;
   const trip = handoverData?.trip;
   const payment = handoverData?.payment;
@@ -600,7 +653,9 @@ export default function ReceiveCarDetailScreen() {
           >
             <Ionicons name="chevron-back" size={26} color="white" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Vehicle Received</Text>
+          <Text style={styles.headerTitle}>
+            {isBike ? "Bike Received" : "Vehicle Received"}
+          </Text>
           <View style={{ width: 26 }} />
         </LinearGradient>
 
@@ -627,9 +682,13 @@ export default function ReceiveCarDetailScreen() {
                     </Text>
                   </View>
                   <Text style={styles.specInline}>
-                    {vehicle?.fuelType || "N/A"} ·{" "}
-                    {vehicle?.transmission || "N/A"} ·{" "}
-                    {vehicle?.seatingCapacity || "-"} Seater
+                    {isBike
+                      ? `${vehicle?.fuelType || "N/A"} · ${
+                          vehicle?.transmission || "N/A"
+                        } · Two Wheeler`
+                      : `${vehicle?.fuelType || "N/A"} · ${
+                          vehicle?.transmission || "N/A"
+                        } · ${vehicle?.seatingCapacity || "-"} Seater`}
                   </Text>
                 </View>
               </View>
@@ -726,7 +785,9 @@ export default function ReceiveCarDetailScreen() {
                   size={20}
                   color="#0F172A"
                 />
-                <Text style={styles.sectionTitle}>Vehicle Condition Check</Text>
+                <Text style={styles.sectionTitle}>
+                  {isBike ? "Bike Condition Check" : "Vehicle Condition Check"}
+                </Text>
               </View>
               <View
                 style={[
@@ -751,7 +812,7 @@ export default function ReceiveCarDetailScreen() {
               {inspectionItems.map((item) => {
                 const needsNote =
                   checks[item.id] === "minor" || checks[item.id] === "major";
-                const orderedTypes = shuffledOrders[item.id];
+                const orderedTypes = shuffledOrders[item.id] || ALL_CONDITIONS;
 
                 return (
                   <View key={item.id} style={styles.inspectWrapperBlock}>
@@ -909,7 +970,11 @@ export default function ReceiveCarDetailScreen() {
                   Damage Note Description *
                 </Text>
                 <TextInput
-                  placeholder="Type structural descriptions or accident notes here..."
+                  placeholder={
+                    isBike
+                      ? "Scratches, dents, broken mirror, fall damage..."
+                      : "Type structural descriptions or accident notes here..."
+                  }
                   placeholderTextColor="#94A3B8"
                   multiline
                   numberOfLines={3}
@@ -1371,7 +1436,9 @@ export default function ReceiveCarDetailScreen() {
           {/* Maintenance */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>
-              Vehicle Maintenance Required?
+              {isBike
+                ? "Bike Maintenance Required?"
+                : "Vehicle Maintenance Required?"}
             </Text>
 
             <View style={[styles.damageSelectionWrapper, { marginTop: 12 }]}>
@@ -1432,7 +1499,11 @@ export default function ReceiveCarDetailScreen() {
                   Maintenance Reason
                 </Text>
                 <TextInput
-                  placeholder="Engine issue, tyre change, servicing..."
+                  placeholder={
+                    isBike
+                      ? "Chain adjustment, brake pads, servicing..."
+                      : "Engine issue, tyre change, servicing..."
+                  }
                   placeholderTextColor="#94A3B8"
                   value={maintenanceReason}
                   onChangeText={setMaintenanceReason}

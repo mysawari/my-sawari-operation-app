@@ -311,10 +311,16 @@ function mapRawHandoverToCard(item) {
       item.vehicle?.vehicleId?.vehicleNumber ||
       item.vehicle?.vehicleNumber ||
       "-",
-    image:
-      item.vehicle?.vehicleId?.images?.[0]?.url ||
-      item.vehicle?.images?.[0]?.url ||
-      "https://via.placeholder.com/300",
+    image: (() => {
+      const url = item.vehicle?.vehicleId?.images?.[0]?.url || item.vehicle?.images?.[0]?.url;
+      if (!url || typeof url !== 'string') return "https://via.placeholder.com/300";
+      if (url.includes('res.cloudinary.com') && url.includes('/upload/')) {
+        if (!url.includes('q_auto') && !url.includes('w_')) {
+          return url.replace('/upload/', '/upload/q_auto,f_auto,w_500,c_limit/');
+        }
+      }
+      return url;
+    })(),
     customer: item.customer?.fullName || "-",
     phone: item.customer?.mobileNumber || "-",
     booking: item._id?.slice(-8).toUpperCase() || "-",

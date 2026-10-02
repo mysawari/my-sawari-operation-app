@@ -431,8 +431,16 @@ export default function HandoverDetailsScreen() {
         <View style={styles.heroCard}>
           <Image
             source={{
-              uri:
-                vehicle?.images?.[0]?.url || "https://via.placeholder.com/400",
+              uri: (() => {
+                const url = vehicle?.images?.[0]?.url;
+                if (!url || typeof url !== 'string') return "https://via.placeholder.com/400";
+                if (url.includes('res.cloudinary.com') && url.includes('/upload/')) {
+                  if (!url.includes('q_auto') && !url.includes('w_')) {
+                    return url.replace('/upload/', '/upload/q_auto,f_auto,w_500,c_limit/');
+                  }
+                }
+                return url;
+              })(),
             }}
             style={styles.vehicleImage}
           />

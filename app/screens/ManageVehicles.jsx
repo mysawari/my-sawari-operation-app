@@ -93,6 +93,16 @@ let screenCache = {
   hasLoadedOnce: false,
 };
 
+const optimizeCloudinaryUrl = (url) => {
+  if (!url || typeof url !== 'string') return "https://via.placeholder.com/300x200";
+  if (url.includes('res.cloudinary.com') && url.includes('/upload/')) {
+    if (!url.includes('q_auto') && !url.includes('w_')) {
+      return url.replace('/upload/', '/upload/q_auto,f_auto,w_500,c_limit/');
+    }
+  }
+  return url;
+};
+
 const mapVehicle = (item) => {
   const regDate = item.registrationDate
     ? new Date(item.registrationDate)
@@ -111,7 +121,7 @@ const mapVehicle = (item) => {
     category: item.category || null, // NEW
     year: validYear,
     pricePerDay: item.pricePerDay || 0,
-    image: item.images?.[0]?.url || "https://via.placeholder.com/300x200",
+    image: optimizeCloudinaryUrl(item.images?.[0]?.url),
     customer: null,
     till: null,
   };

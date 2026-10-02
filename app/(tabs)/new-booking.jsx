@@ -1298,12 +1298,12 @@ export default function BookingScreen() {
   }, [bookings, dateFrom, dateTo]);
 
   // ---- Scroll position persistence + restore (ID-BASED) ----
-  const viewabilityConfig = useRef({
+  const viewabilityConfig = useMemo(() => ({
     itemVisiblePercentThreshold: 20,
     minimumViewTime: 100,
-  }).current;
+  }), []);
 
-  const onViewableItemsChanged = useRef(({ viewableItems }) => {
+  const onViewableItemsChanged = useCallback(({ viewableItems }) => {
     if (!viewableItems || viewableItems.length === 0) return;
     const topItem = viewableItems[0]?.item;
     if (!topItem?.id) return;
@@ -1313,7 +1313,7 @@ export default function BookingScreen() {
     if (!restoreDoneRef.current && topItem.id === targetItemIdRef.current) {
       restoreDoneRef.current = true;
     }
-  }).current;
+  }, []);
 
   const handleContentSizeChange = useCallback(() => {
     if (restoreDoneRef.current) return;

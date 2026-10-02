@@ -127,9 +127,16 @@ export default function UpcomingReturns() {
             >
               <Image
                 source={{
-                  uri:
-                    vehicle?.images?.[0]?.url ||
-                    "https://via.placeholder.com/100",
+                  uri: (() => {
+                    const url = vehicle?.images?.[0]?.url;
+                    if (!url || typeof url !== 'string') return "https://via.placeholder.com/100";
+                    if (url.includes('res.cloudinary.com') && url.includes('/upload/')) {
+                      if (!url.includes('q_auto') && !url.includes('w_')) {
+                        return url.replace('/upload/', '/upload/q_auto,f_auto,w_300,c_limit/');
+                      }
+                    }
+                    return url;
+                  })(),
                 }}
                 style={styles.image}
                 resizeMode="cover"

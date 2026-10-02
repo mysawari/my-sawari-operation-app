@@ -11,6 +11,16 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 import { Platform, PermissionsAndroid, Alert } from "react-native";
 import Constants from "expo-constants";
 
+import * as Notifications from 'expo-notifications';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
+
 // Only require Firebase if not running in Expo Go
 let messaging = null;
 const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === 'storeClient';
@@ -21,7 +31,20 @@ if (!isExpoGo) {
     messaging = messagingModule.default || messagingModule;
     // Register background handler early
     messaging().setBackgroundMessageHandler(async remoteMessage => {
-      console.log('Message handled in the background!');
+      console.log('Message handled in the background!', remoteMessage);
+      
+      // If Firebase sends a data-only payload, Android won't show a banner automatically.
+      // We manually create a local notification here using expo-notifications.
+      if (!remoteMessage.notification && remoteMessage.data) {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: remoteMessage.data.title || "New Notification",
+            body: remoteMessage.data.body || "You have a new message.",
+            data: remoteMessage.data,
+          },
+          trigger: null,
+        });
+      }
     });
   } catch (e) {
     console.warn("Firebase messaging module not available");
@@ -76,14 +99,17 @@ export default function RootLayout() {
       setupPushNotifications();
 
       const unsubscribe = messaging().onMessage(async (remoteMessage) => {
-        console.log('A new FCM message arrived!');
-        // Use Alert from react-native
-        if (remoteMessage?.notification) {
-          Alert.alert(
-            remoteMessage.notification.title || "New Notification",
-            remoteMessage.notification.body
-          );
-        }
+        console.log('A new FCM message arrived!', remoteMessage);
+        
+        // Show a local notification banner when the app is open
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: remoteMessage.notification?.title || remoteMessage.data?.title || "New Notification",
+            body: remoteMessage.notification?.body || remoteMessage.data?.body || "You have a new message.",
+            data: remoteMessage.data || {},
+          },
+          trigger: null,
+        });
       });
 
       return unsubscribe;

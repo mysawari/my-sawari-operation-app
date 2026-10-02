@@ -92,13 +92,23 @@ export default function ServiceVehiclesScreen() {
     ]);
   };
 
+  const optimizeCloudinaryUrl = (url) => {
+    if (!url || typeof url !== 'string') return "https://via.placeholder.com/150";
+    if (url.includes('res.cloudinary.com') && url.includes('/upload/')) {
+      if (!url.includes('q_auto') && !url.includes('w_')) {
+        return url.replace('/upload/', '/upload/q_auto,f_auto,w_300,c_limit/');
+      }
+    }
+    return url;
+  };
+
   const renderVehicle = ({ item }) => (
     <View style={styles.card}>
       {/* Compact Image Block */}
       <View style={styles.imageContainer}>
         <Image
           source={{
-            uri: item.images?.[0]?.url || "https://via.placeholder.com/150",
+            uri: optimizeCloudinaryUrl(item.images?.[0]?.url),
           }}
           style={styles.image}
           resizeMode="cover"

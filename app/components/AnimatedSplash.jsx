@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Animated, Image } from 'react-native';
 
 export function AnimatedSplash({ isReady, children }) {
   const [isAnimationComplete, setIsAnimationComplete] = useState(false);
-  
+
   const opacityAnim = useRef(new Animated.Value(1)).current;
   const logoScale = useRef(new Animated.Value(0.8)).current;
   const logoOpacity = useRef(new Animated.Value(0)).current;
@@ -25,20 +25,22 @@ export function AnimatedSplash({ isReady, children }) {
       Animated.parallel([
         Animated.timing(taglineOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
         Animated.timing(taglineTranslateY, { toValue: 0, duration: 400, useNativeDriver: true }),
-      ])
+      ]),
     ]).start();
   }, []);
 
   useEffect(() => {
-    if (isReady) {
-      setTimeout(() => {
-        Animated.timing(opacityAnim, {
-          toValue: 0,
-          duration: 400,
-          useNativeDriver: true,
-        }).start(() => setIsAnimationComplete(true));
-      }, 300);
-    }
+    if (!isReady) return;
+
+    const timer = setTimeout(() => {
+      Animated.timing(opacityAnim, {
+        toValue: 0,
+        duration: 400,
+        useNativeDriver: true,
+      }).start(() => setIsAnimationComplete(true));
+    }, 300);
+
+    return () => clearTimeout(timer);
   }, [isReady]);
 
   return (
@@ -47,7 +49,8 @@ export function AnimatedSplash({ isReady, children }) {
       {!isAnimationComplete && (
         <Animated.View
           pointerEvents="auto"
-          style={[styles.splashScreen, { opacity: opacityAnim }]}>
+          style={[styles.splashScreen, { opacity: opacityAnim }]}
+        >
           <View style={styles.content}>
             <Animated.View style={{ opacity: logoOpacity, transform: [{ scale: logoScale }] }}>
               <Image
@@ -57,11 +60,23 @@ export function AnimatedSplash({ isReady, children }) {
               />
             </Animated.View>
 
-            <Animated.View style={{ opacity: titleOpacity, transform: [{ translateY: titleTranslateY }], marginTop: 4 }}>
+            <Animated.View
+              style={{
+                opacity: titleOpacity,
+                transform: [{ translateY: titleTranslateY }],
+                marginTop: 4,
+              }}
+            >
               <Text style={styles.titleText}>MySawari</Text>
             </Animated.View>
 
-            <Animated.View style={{ opacity: taglineOpacity, transform: [{ translateY: taglineTranslateY }], marginTop: 6 }}>
+            <Animated.View
+              style={{
+                opacity: taglineOpacity,
+                transform: [{ translateY: taglineTranslateY }],
+                marginTop: 6,
+              }}
+            >
               <Text style={styles.tagline}>Your ride, your way.</Text>
             </Animated.View>
           </View>
@@ -71,11 +86,19 @@ export function AnimatedSplash({ isReady, children }) {
   );
 }
 
+// Default export required by Expo Router (removes the warning)
+export default AnimatedSplash;
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   splashScreen: {
-    position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
-    alignItems: 'center', justifyContent: 'center',
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
     zIndex: 9999,
     backgroundColor: '#FAFAF9',
   },
@@ -92,5 +115,5 @@ const styles = StyleSheet.create({
     fontSize: 15,
     letterSpacing: 0.3,
     color: '#6B7280',
-  }
+  },
 });

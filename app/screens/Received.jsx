@@ -39,19 +39,24 @@ const BASE_TABS = [
 const PAGE_SIZE = 7;
 const SEARCH_DEBOUNCE_MS = 250;
 
+// Search results are cached per (tab + search term), so typing back a
+// previous term ("ram" -> "rams" -> backspace -> "ram") is instant.
+const SEARCH_CACHE_MAX = 40;
+const SEARCH_CACHE_TTL_MS = 2 * 60 * 1000;
+
 // ==========================================
-// MODULE-LEVEL CACHE — one bucket PER TAB, so switching tabs is instant
-// (no refetch, no full-array re-filter) and survives this screen
-// unmounting/remounting (tab switch, stack pop/push, navigator
-// lazy-unmounting a blurred screen). Reset only on full app reload.
+// MODULE-LEVEL CACHE — one bucket PER TAB (results with NO search), so
+// switching tabs is instant and survives this screen unmounting /
+// remounting. Reset only on full app reload.
 // ==========================================
 const emptyTabState = () => ({
-  items: [], // mapped, ready-to-render cards for this tab
-  rawItems: [], // raw API rows for this tab (kept so "load more" can re-map cleanly)
+  items: [], // mapped, ready-to-render cards
+  rawItems: [], // raw API rows (kept so "load more" can append cleanly)
   page: 0,
   hasMore: true,
   total: 0,
-  lastSearch: undefined, // search term this cache was fetched with; mismatch = stale
+  fetchedAt: 0, // 0 = never fetched
+  stale: false, // true = show it, but refetch on next visit
 });
 
 const screenCache = {
@@ -67,6 +72,69 @@ const screenCache = {
   activeTab: "today",
   scrollOffsets: {},
   hasFetchedOnce: false, // true once ANY tab has loaded this app session
+};
+
+// Search results: key `${tab}::${term}` -> same shape as emptyTabState()
+const searchCache = new Map();
+
+const normalizeTerm = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
+const searchKey = (tab, term) => `${tab}::${term}`;
+
+// Cache bucket for a tab + search term ("" term = the tab cache).
+const getEntry = (tab, term, create = true) => {
+  if (!term) return screenCache.tabs[tab];
+  const key = searchKey(tab, term);
+  let entry = searchCache.get(key);
+  if (!entry && create) {
+    entry = emptyTabState();
+    searchCache.set(key, entry);
+    if (searchCache.size > SEARCH_CACHE_MAX) {
+      searchCache.delete(searchCache.keys().next().value); // drop oldest
+    }
+  }
+  return entry || null;
+};
+
+const isEntryFresh = (entry, term) => {
+  if (!entry?.fetchedAt) return false;
+  if (!term) return !entry.stale;
+  return Date.now() - entry.fetchedAt < SEARCH_CACHE_TTL_MS;
+};
+
+const isAbortError = (err) =>
+  err?.code === "ERR_CANCELED" ||
+  err?.name === "CanceledError" ||
+  err?.name === "AbortError";
+
+// Local match used for the instant preview while the server answers.
+const matchesSearch = (card, term) => {
+  if (card.searchText.includes(term)) return true;
+  const compact = term.replace(/[\s-]/g, "");
+  return !!compact && card.searchCompact.includes(compact);
+};
+
+/**
+ * INSTANT PREVIEW — filters results we already have on the device, so
+ * the list reacts on the very first keystroke. Uses the closest shorter
+ * search already loaded ("ram" results when typing "rams"), otherwise
+ * the tab's own list. Server results replace it a moment later.
+ */
+const buildLocalPreview = (tab, term) => {
+  if (!term) return screenCache.tabs[tab].items;
+  for (let i = term.length - 1; i >= 0; i--) {
+    const prefix = term.slice(0, i);
+    const entry = prefix
+      ? searchCache.get(searchKey(tab, prefix))
+      : screenCache.tabs[tab];
+    if (entry?.fetchedAt) {
+      return entry.items.filter((card) => matchesSearch(card, term));
+    }
+  }
+  return [];
 };
 
 // Utility: Format Date Time
@@ -141,7 +209,6 @@ const formatDuration = (ms) => {
 const getActiveTiming = (dropAt, now, fallbackLabel) => {
   const dropMs = dropAt ? new Date(dropAt).getTime() : NaN;
 
-  // No usable expected-return time → fall back to whatever backend sent
   if (isNaN(dropMs)) {
     return {
       label: "Remaining",
@@ -228,9 +295,8 @@ const getReturnTiming = (item) => {
 };
 
 /* ---------------------------------------------------------------------- */
-/*  Small debounce hook — keeps the search TextInput feeling instant while */
-/*  delaying the (potentially expensive) filter/sort recompute until the   */
-/*  user actually pauses typing.                                          */
+/*  Small debounce hook — the server request waits until the user pauses  */
+/*  typing; the on-device preview reacts on every keystroke.              */
 /* ---------------------------------------------------------------------- */
 function useDebouncedValue(value, delayMs) {
   const [debounced, setDebounced] = useState(value);
@@ -243,8 +309,7 @@ function useDebouncedValue(value, delayMs) {
 
 /* ---------------------------------------------------------------------- */
 /*  Pure mapping fn, at module scope so it's only ever applied to the      */
-/*  small page of items the backend returns for the active tab — never    */
-/*  to a full multi-hundred-item list.                                    */
+/*  small page of items the backend returns for the active tab.           */
 /* ---------------------------------------------------------------------- */
 function mapRawHandoverToCard(item) {
   const isComp = item.returnStatus === "completed";
@@ -301,29 +366,48 @@ function mapRawHandoverToCard(item) {
       }
     : null;
 
+  const name =
+    item.vehicle?.vehicleId?.vehicleName ||
+    item.vehicle?.vehicleName ||
+    "Unknown Vehicle";
+  const plate =
+    item.vehicle?.vehicleId?.vehicleNumber ||
+    item.vehicle?.vehicleNumber ||
+    "-";
+  const customer = item.customer?.fullName || "-";
+  const phone = item.customer?.mobileNumber || "-";
+  const booking = item._id?.slice(-8).toUpperCase() || "-";
+
+  // Pre-built once per card so the instant search preview is cheap.
+  const searchText = [name, plate, customer, phone, booking, dropLocation]
+    .join(" ")
+    .toLowerCase();
+
   return {
     id: item._id,
-    name:
-      item.vehicle?.vehicleId?.vehicleName ||
-      item.vehicle?.vehicleName ||
-      "Unknown Vehicle",
-    plate:
-      item.vehicle?.vehicleId?.vehicleNumber ||
-      item.vehicle?.vehicleNumber ||
-      "-",
+    name,
+    plate,
     image: (() => {
-      const url = item.vehicle?.vehicleId?.images?.[0]?.url || item.vehicle?.images?.[0]?.url;
-      if (!url || typeof url !== 'string') return "https://via.placeholder.com/300";
-      if (url.includes('res.cloudinary.com') && url.includes('/upload/')) {
-        if (!url.includes('q_auto') && !url.includes('w_')) {
-          return url.replace('/upload/', '/upload/q_auto,f_auto,w_500,c_limit/');
+      const url =
+        item.vehicle?.vehicleId?.images?.[0]?.url ||
+        item.vehicle?.images?.[0]?.url;
+      if (!url || typeof url !== "string")
+        return "https://via.placeholder.com/300";
+      if (url.includes("res.cloudinary.com") && url.includes("/upload/")) {
+        if (!url.includes("q_auto") && !url.includes("w_")) {
+          return url.replace(
+            "/upload/",
+            "/upload/q_auto,f_auto,w_500,c_limit/",
+          );
         }
       }
       return url;
     })(),
-    customer: item.customer?.fullName || "-",
-    phone: item.customer?.mobileNumber || "-",
-    booking: item._id?.slice(-8).toUpperCase() || "-",
+    customer,
+    phone,
+    booking,
+    searchText,
+    searchCompact: searchText.replace(/[\s-]/g, ""),
     balanceAmount,
     paymentStatus,
     billSummary,
@@ -350,8 +434,6 @@ function mapRawHandoverToCard(item) {
     expectedTime: dropDate
       ? dropDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       : "-",
-    // Raw expected-return timestamp — used to compute live countdown /
-    // overdue / early / on-time on the device.
     dropAt: item.trip?.dropDateTime || null,
     dueIn: isComp
       ? item.returnDetails?.timeStatus || "Completed"
@@ -582,9 +664,6 @@ const TimeCell = memo(
 
 /* ---------------------------------------------------------------------- */
 /*  Skeleton placeholder — shown only on a true cold start (no cache yet). */
-/*  It mirrors the real card's layout so the screen reads as "already      */
-/*  loading content" instead of a blank spinner, and swaps to real cards   */
-/*  the instant data lands with no layout jump.                            */
 /* ---------------------------------------------------------------------- */
 function SkeletonBlock({ style }) {
   const pulse = useRef(new Animated.Value(0.4)).current;
@@ -640,10 +719,7 @@ function SkeletonCard() {
 }
 
 /* ---------------------------------------------------------------------- */
-/*  CarCard — memoized so typing in search / switching tabs / refresh      */
-/*  doesn't re-render every visible card, only the ones whose data changed.*/
-/*  Active (not yet returned) cards also re-render on the shared 30s clock */
-/*  so "Time Left" / "Overdue By" stays live.                              */
+/*  CarCard — memoized; active cards re-render on the shared 30s clock.    */
 /* ---------------------------------------------------------------------- */
 const CarCard = memo(
   function CarCard({ item, onOpenDetail, onCall, onAssignDriver }) {
@@ -652,10 +728,8 @@ const CarCard = memo(
     const hasDropLocation = item.dropLocation && item.dropLocation !== "-";
     const hasPhone = !!item.phone && item.phone !== "-";
 
-    // Live clock — only subscribed while the vehicle is still out.
     const now = useNow(!isCompleted);
 
-    // Copy-to-clipboard feedback (icon flips to a checkmark for 1.5s)
     const [copied, setCopied] = useState(false);
     const copyTimerRef = useRef(null);
 
@@ -684,8 +758,6 @@ const CarCard = memo(
       : getActiveTiming(item.dropAt, now, item.dueIn);
     const returnTiming = isCompleted ? getReturnTiming(item) : null;
 
-    // Status badge is derived live too, so a card flips to "Overdue" the
-    // moment its return time passes (no refresh needed).
     const badge = isCompleted
       ? {
           label: item.status,
@@ -745,7 +817,7 @@ const CarCard = memo(
               <Text style={styles.bookingIdTag}>#{item.booking}</Text>
             </View>
 
-            {/* Customer Contact: name on the left, copy + call on the right */}
+            {/* Customer Contact */}
             <View style={styles.customerRow}>
               <View style={styles.customerGroup}>
                 <Ionicons name="person-outline" size={13} color="#64748B" />
@@ -786,7 +858,7 @@ const CarCard = memo(
               </View>
             </View>
 
-            {/* Driver Allocation Row - Assign/Reassign button hidden when completed */}
+            {/* Driver Allocation Row */}
             <View style={styles.driverAllocationRow}>
               {item.assignedDriver?.fullName ? (
                 <View style={styles.driverAssignedBadge}>
@@ -951,23 +1023,22 @@ export default function ReceiveCarScreen() {
   const [search, setSearch] = useState(screenCache.search);
   const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS);
 
-  const [items, setItems] = useState(
-    () => screenCache.tabs[screenCache.activeTab].items,
-  );
-  const [counts, setCounts] = useState(screenCache.counts);
-  const [total, setTotal] = useState(
-    screenCache.tabs[screenCache.activeTab].total,
-  );
-  const [hasMore, setHasMore] = useState(
-    screenCache.tabs[screenCache.activeTab].hasMore,
-  );
+  // What to show on mount: results for the current tab + saved search.
+  const initialEntry =
+    getEntry(screenCache.activeTab, normalizeTerm(screenCache.search), false) ||
+    screenCache.tabs[screenCache.activeTab];
 
-  // Only the very first load of the whole session blocks with the full
-  // screen loader; every later visit (any tab) shows cached data instantly.
+  const [items, setItems] = useState(() => initialEntry.items);
+  const [counts, setCounts] = useState(screenCache.counts);
+  const [total, setTotal] = useState(initialEntry.total);
+  const [hasMore, setHasMore] = useState(initialEntry.hasMore);
+
+  // Only the very first load of the whole session shows the skeleton.
   const [loading, setLoading] = useState(!screenCache.hasFetchedOnce);
-  // Small in-list loader used only when switching to a tab we have no
-  // cached data for yet.
+  // Small in-list loader, used when switching to a tab with no cache yet.
   const [tabLoading, setTabLoading] = useState(false);
+  // Spinner inside the search bar while the server search is running.
+  const [searching, setSearching] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -979,128 +1050,156 @@ export default function ReceiveCarScreen() {
   const flatListRef = useRef(null);
   const activeTabRef = useRef(activeTab);
   const isFirstSearchEffect = useRef(true);
+  const isFirstDebounceEffect = useRef(true);
   const hasPrefetchedOthers = useRef(false);
-  // Holds the in-flight promise for the active tab's very first fetch on
-  // mount, so the background "prefetch other tabs" effect (below) can wait
-  // for it instead of firing at the same time and fighting it for the
-  // device's limited concurrent-connection pool.
   const initialLoadPromiseRef = useRef(null);
+
+  // Per-tab request counter + abort controller. Only the LATEST page-1
+  // request of a tab may update the screen, so a slow old search can
+  // never overwrite newer results; the old request is also cancelled.
+  const requestSeqRef = useRef({});
+  const abortRef = useRef({});
 
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
 
-  const applyResultToState = useCallback((tab, mappedItems, resData) => {
-    // Guard against a background fetch for a tab the user has since
-    // navigated away from clobbering what's currently on screen.
-    if (tab !== activeTabRef.current) return;
-    setItems(mappedItems);
-    setHasMore(resData.hasMore);
-    setTotal(resData.total);
+  // Cancel in-flight requests when the screen unmounts
+  useEffect(
+    () => () => {
+      Object.values(abortRef.current).forEach((c) => c?.abort());
+    },
+    [],
+  );
+
+  const showEntry = useCallback((entry) => {
+    setItems(entry.items);
+    setHasMore(entry.hasMore);
+    setTotal(entry.total);
   }, []);
 
   const fetchTab = useCallback(
     async (
       tab,
-      { page = 1, silent = false, searchOverride, includeCounts = false } = {},
+      { page = 1, silent = false, term, includeCounts = false } = {},
     ) => {
-      const searchTerm = searchOverride ?? screenCache.search;
-      try {
-        if (page === 1 && !silent) setTabLoading(true);
-        if (page > 1) setLoadingMore(true);
+      const termValue = term ?? normalizeTerm(screenCache.search);
+      const seqs = requestSeqRef.current;
 
+      let controller = null;
+      if (page === 1) {
+        seqs[tab] = (seqs[tab] || 0) + 1;
+        abortRef.current[tab]?.abort();
+        controller = new AbortController();
+        abortRef.current[tab] = controller;
+      }
+      const seq = seqs[tab] || 0;
+      const isLatest = () => seq === requestSeqRef.current[tab];
+
+      try {
         const res = await api.get("/handover/receive-list", {
           headers: { Authorization: `Bearer ${token}` },
+          signal: controller?.signal,
           params: {
             tab,
             page,
             limit: PAGE_SIZE,
-            search: searchTerm,
+            search: termValue,
             completedDays: 90,
-            // Badge-pill counts don't change between tab switches, "load
-            // more" pages, or background prefetch — only ask the backend
-            // to recompute them on the moments that actually need fresh
-            // numbers (first load, manual refresh), so every other call
-            // skips that work server-side entirely.
+            // Counts only on first load / manual refresh
             includeCounts: includeCounts ? "true" : "false",
           },
         });
 
+        // A newer search / refresh for this tab started — ignore this one.
+        if (!isLatest()) return;
+
         if (res.data.success) {
           const raw = res.data.data || [];
-          const cache = screenCache.tabs[tab];
-          const rawItems =
-            page === 1 ? raw : [...(cache.rawItems || []), ...raw];
+          const mapped = raw.map(mapRawHandoverToCard);
+          const entry = getEntry(tab, termValue);
 
-          cache.rawItems = rawItems;
-          cache.items = rawItems.map(mapRawHandoverToCard);
-          cache.page = page;
-          cache.hasMore = res.data.hasMore;
-          cache.total = res.data.total;
-          cache.lastSearch = searchTerm;
-          cache.fetchedAt = Date.now();
+          if (page === 1) {
+            entry.rawItems = raw;
+            entry.items = mapped;
+          } else {
+            entry.rawItems = [...(entry.rawItems || []), ...raw];
+            entry.items = [...(entry.items || []), ...mapped];
+          }
+          entry.page = page;
+          entry.hasMore = !!res.data.hasMore;
+          entry.total = res.data.total || 0;
+          entry.fetchedAt = Date.now();
+          entry.stale = false;
+
           if (res.data.counts) {
             screenCache.counts = res.data.counts;
+            setCounts(res.data.counts);
           }
 
-          applyResultToState(tab, cache.items, res.data);
-          if (res.data.counts) {
-            setCounts(screenCache.counts);
+          // Only paint it if the user is still looking at this tab + term
+          if (
+            tab === activeTabRef.current &&
+            termValue === normalizeTerm(screenCache.search)
+          ) {
+            showEntry(entry);
           }
-        } else {
-          if (!silent) {
-            Alert.alert("Error", res.data.message || "Failed to load cars");
-          }
+        } else if (!silent) {
+          Alert.alert("Error", res.data.message || "Failed to load cars");
         }
       } catch (err) {
-        if (!silent) {
+        if (isAbortError(err)) return;
+        if (!silent && isLatest()) {
           Alert.alert(
             "Error",
             err?.response?.data?.message || "Failed to load cars",
           );
         }
       } finally {
-        setLoading(false);
         setRefreshing(false);
-        setTabLoading(false);
-        setLoadingMore(false);
+        if (page > 1) setLoadingMore(false);
+        if (isLatest() && tab === activeTabRef.current) {
+          setLoading(false);
+          setTabLoading(false);
+          if (termValue === normalizeTerm(screenCache.search)) {
+            setSearching(false);
+          }
+        }
       }
     },
-    [token, applyResultToState],
+    [token, showEntry],
   );
 
   // ---- Initial load: show cache instantly if we have it, else fetch ----
   useEffect(() => {
     if (!token) return;
 
-    const cache = screenCache.tabs[activeTab];
-    const isFresh =
-      cache.items.length > 0 && cache.lastSearch === screenCache.search;
+    const term = normalizeTerm(screenCache.search);
+    const entry = getEntry(activeTab, term, false);
 
     let loadPromise;
-    if (isFresh) {
-      setItems(cache.items);
-      setHasMore(cache.hasMore);
-      setTotal(cache.total);
+    if (entry?.fetchedAt) {
+      showEntry(entry);
       setLoading(false);
-      // Quiet revalidate — cached data is already on screen, so this isn't
-      // performance-sensitive; badge counts are unlikely to have moved,
-      // so skip recomputing them here too.
-      loadPromise = fetchTab(activeTab, { page: 1, silent: true });
+      // Quiet revalidate — cached data is already on screen.
+      loadPromise = fetchTab(activeTab, { page: 1, silent: true, term });
     } else {
       setLoading(!screenCache.hasFetchedOnce);
-      // First real fetch of the session for this tab — this is the one
-      // moment the badge pills actually need fresh numbers.
+      if (screenCache.hasFetchedOnce) {
+        if (term) setSearching(true);
+        else setTabLoading(true);
+      }
       loadPromise = fetchTab(activeTab, {
         page: 1,
         silent: screenCache.hasFetchedOnce,
         includeCounts: true,
+        term,
       });
     }
     initialLoadPromiseRef.current = loadPromise;
     screenCache.hasFetchedOnce = true;
 
-    const savedOffset = screenCache.scrollOffsets[activeTab] || 0;
+    const savedOffset = term ? 0 : screenCache.scrollOffsets[activeTab] || 0;
     if (savedOffset > 0) {
       requestAnimationFrame(() => {
         flatListRef.current?.scrollToOffset({
@@ -1112,11 +1211,7 @@ export default function ReceiveCarScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // ---- Background prefetch of the OTHER tabs, once, staggered — so ----
-  // ---- switching tabs feels instant even the very first time.      ----
-  // Waits for the active tab's own initial fetch to settle first, so this
-  // background work never competes with (and slows down) the request the
-  // user is actually looking at.
+  // ---- Background prefetch of the OTHER tabs (no search), once ----
   useEffect(() => {
     if (!token || hasPrefetchedOthers.current) return;
     hasPrefetchedOthers.current = true;
@@ -1132,11 +1227,8 @@ export default function ReceiveCarScreen() {
       for (const t of others) {
         if (cancelled) return;
         const cache = screenCache.tabs[t];
-        if (
-          cache.items.length === 0 ||
-          cache.lastSearch !== screenCache.search
-        ) {
-          await fetchTab(t, { page: 1, silent: true });
+        if (!cache.fetchedAt || cache.stale) {
+          await fetchTab(t, { page: 1, silent: true, term: "" });
           await new Promise((r) => setTimeout(r, 150)); // don't hammer the API
         }
       }
@@ -1147,24 +1239,50 @@ export default function ReceiveCarScreen() {
     };
   }, [token, fetchTab]);
 
-  // ---- Search changed: refetch active tab, invalidate other tabs' cache ----
+  // ---- Search typed: react INSTANTLY on the device (every keystroke) ----
   useEffect(() => {
+    screenCache.search = search;
     if (isFirstSearchEffect.current) {
       isFirstSearchEffect.current = false;
       return;
     }
-    screenCache.search = debouncedSearch;
-    Object.values(screenCache.tabs).forEach((c) => {
-      c.lastSearch = undefined;
-    });
-    fetchTab(activeTab, { page: 1, searchOverride: debouncedSearch });
+
+    const term = normalizeTerm(search);
+    const tab = activeTabRef.current;
+    const entry = getEntry(tab, term, false);
+
+    flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+
+    // Already searched this recently (or cleared back to the tab list)
+    if (entry && isEntryFresh(entry, term)) {
+      showEntry(entry);
+      setSearching(false);
+      return;
+    }
+
+    // Instant preview from data already on the phone
+    const preview = buildLocalPreview(tab, term);
+    setItems(preview);
+    setTotal(preview.length);
+    setHasMore(false);
+    setSearching(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  // ---- Search paused: ask the server (debounced) ----
+  useEffect(() => {
+    if (isFirstDebounceEffect.current) {
+      isFirstDebounceEffect.current = false;
+      return;
+    }
+    const term = normalizeTerm(debouncedSearch);
+    const tab = activeTabRef.current;
+    const entry = getEntry(tab, term, false);
+    if (entry && isEntryFresh(entry, term)) return;
+
+    fetchTab(tab, { page: 1, silent: true, term });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch]);
-
-  // ---- Persist UI state to the module-level cache as it changes ----
-  useEffect(() => {
-    screenCache.search = search;
-  }, [search]);
 
   useEffect(() => {
     screenCache.activeTab = activeTab;
@@ -1173,40 +1291,85 @@ export default function ReceiveCarScreen() {
   const handleTabChange = useCallback(
     (tabId) => {
       if (tabId === activeTab) return;
+      activeTabRef.current = tabId;
       setActiveTab(tabId);
 
-      const cache = screenCache.tabs[tabId];
-      const isFresh =
-        cache.items.length > 0 && cache.lastSearch === screenCache.search;
+      const term = normalizeTerm(screenCache.search);
+      const entry = getEntry(tabId, term, false);
+      const fresh = !!entry && isEntryFresh(entry, term);
 
-      setItems(cache.items);
-      setHasMore(cache.hasMore);
-      setTotal(cache.total);
-      setTabLoading(!isFresh);
+      if (entry?.fetchedAt) {
+        showEntry(entry);
+      } else if (term) {
+        const preview = buildLocalPreview(tabId, term);
+        setItems(preview);
+        setTotal(preview.length);
+        setHasMore(false);
+      } else {
+        showEntry(screenCache.tabs[tabId]);
+      }
 
-      const offset = screenCache.scrollOffsets[tabId] || 0;
+      const offset = term ? 0 : screenCache.scrollOffsets[tabId] || 0;
       flatListRef.current?.scrollToOffset({ offset, animated: false });
 
-      if (!isFresh) {
-        fetchTab(tabId, { page: 1, silent: cache.items.length > 0 });
+      if (fresh) {
+        setTabLoading(false);
+        setSearching(false);
+        return;
       }
+
+      if (term) {
+        setTabLoading(false);
+        setSearching(true);
+      } else {
+        setSearching(false);
+        setTabLoading(!entry?.fetchedAt);
+      }
+
+      fetchTab(tabId, {
+        page: 1,
+        silent: !!entry?.items?.length,
+        term,
+      });
     },
-    [activeTab, fetchTab],
+    [activeTab, fetchTab, showEntry],
   );
 
   const handleLoadMore = useCallback(() => {
-    const cache = screenCache.tabs[activeTab];
-    if (!cache.hasMore || loadingMore) return;
-    fetchTab(activeTab, { page: (cache.page || 1) + 1, silent: true });
-  }, [activeTab, loadingMore, fetchTab]);
+    const term = normalizeTerm(screenCache.search);
+    const entry = getEntry(activeTab, term, false);
+    if (
+      !entry?.fetchedAt ||
+      !entry.hasMore ||
+      loadingMore ||
+      searching ||
+      tabLoading
+    ) {
+      return;
+    }
+    setLoadingMore(true);
+    fetchTab(activeTab, {
+      page: (entry.page || 1) + 1,
+      silent: true,
+      term,
+    });
+  }, [activeTab, loadingMore, searching, tabLoading, fetchTab]);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    // Manual refresh is the other moment worth paying for fresh counts.
-    fetchTab(activeTab, { page: 1, silent: true, includeCounts: true });
-    // Other tabs may now be stale — they'll refetch lazily next time visited.
-    Object.entries(screenCache.tabs).forEach(([id, c]) => {
-      if (id !== activeTab) c.lastSearch = undefined;
+    const term = normalizeTerm(screenCache.search);
+
+    // Everything else may now be stale — refetched lazily when visited.
+    Object.values(screenCache.tabs).forEach((c) => {
+      c.stale = true;
+    });
+    searchCache.clear();
+
+    fetchTab(activeTab, {
+      page: 1,
+      silent: true,
+      includeCounts: true,
+      term,
     });
   }, [activeTab, fetchTab]);
 
@@ -1238,12 +1401,19 @@ export default function ReceiveCarScreen() {
   };
 
   const handleDriverAssigned = (driver) => {
-    const cache = screenCache.tabs[activeTab];
-    const updated = cache.items.map((c) =>
-      c.id === selectedForDriver?.id ? { ...c, assignedDriver: driver } : c,
+    const id = selectedForDriver?.id;
+    const patch = (entry) => {
+      if (!entry?.items?.length) return;
+      entry.items = entry.items.map((c) =>
+        c.id === id ? { ...c, assignedDriver: driver } : c,
+      );
+    };
+    // Same vehicle can appear in several tabs / searches — update all.
+    Object.values(screenCache.tabs).forEach(patch);
+    searchCache.forEach(patch);
+    setItems((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, assignedDriver: driver } : c)),
     );
-    cache.items = updated;
-    setItems(updated);
   };
 
   const handleOpenDetail = useCallback(
@@ -1274,9 +1444,10 @@ export default function ReceiveCarScreen() {
     [handleOpenDetail, handleCall, openAssignDriverModal],
   );
 
-  // ---- Scroll position persistence, per tab ----
+  // ---- Scroll position persistence, per tab (not for search results) ----
   const handleScroll = useCallback(
     (e) => {
+      if (normalizeTerm(screenCache.search)) return;
       screenCache.scrollOffsets[activeTab] = e.nativeEvent.contentOffset.y;
     },
     [activeTab],
@@ -1342,14 +1513,24 @@ export default function ReceiveCarScreen() {
       {/* Search Input Container */}
       <View style={styles.searchSection}>
         <View style={styles.searchContainer}>
-          <Ionicons name="search-outline" size={16} color="#64748B" />
+          {searching ? (
+            <ActivityIndicator
+              size="small"
+              color="#2563EB"
+              style={styles.searchSpinner}
+            />
+          ) : (
+            <Ionicons name="search-outline" size={16} color="#64748B" />
+          )}
           <TextInput
-            placeholder="Search by customer, vehicle, plate, or ID..."
+            placeholder="Search by customer, mobile, vehicle, plate, or ID..."
             placeholderTextColor="#94A3B8"
             style={styles.searchInput}
             value={search}
             onChangeText={setSearch}
             autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
           />
           {search.length > 0 && (
             <TouchableOpacity onPress={() => setSearch("")} hitSlop={10}>
@@ -1411,6 +1592,8 @@ export default function ReceiveCarScreen() {
             keyExtractor={(item) => item.id}
             renderItem={renderCard}
             showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             contentContainerStyle={[
               styles.listContainer,
               items.length === 0 && styles.emptyListContainer,
@@ -1433,21 +1616,30 @@ export default function ReceiveCarScreen() {
             }
             ListFooterComponent={renderListFooter}
             ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <View style={styles.emptyIconCircle}>
-                  <Ionicons
-                    name="car-sport-outline"
-                    size={32}
-                    color="#94A3B8"
-                  />
+              searching || tabLoading ? (
+                <View style={styles.emptyContainer}>
+                  <ActivityIndicator size="small" color="#2563EB" />
+                  <Text style={[styles.emptySubheading, { marginTop: 10 }]}>
+                    {searching ? `Searching "${search.trim()}"…` : "Loading…"}
+                  </Text>
                 </View>
-                <Text style={styles.emptyHeading}>No Allocations Found</Text>
-                <Text style={styles.emptySubheading}>
-                  {search.length > 0
-                    ? `No vehicle logs matched your search "${search}"`
-                    : "There are currently no records listed under this filter."}
-                </Text>
-              </View>
+              ) : (
+                <View style={styles.emptyContainer}>
+                  <View style={styles.emptyIconCircle}>
+                    <Ionicons
+                      name="car-sport-outline"
+                      size={32}
+                      color="#94A3B8"
+                    />
+                  </View>
+                  <Text style={styles.emptyHeading}>No Allocations Found</Text>
+                  <Text style={styles.emptySubheading}>
+                    {search.length > 0
+                      ? `No vehicle logs matched your search "${search}"`
+                      : "There are currently no records listed under this filter."}
+                  </Text>
+                </View>
+              )
             }
           />
         </>
@@ -1530,6 +1722,11 @@ const styles = StyleSheet.create({
     gap: 8,
     borderWidth: 1,
     borderColor: "#E2E8F0",
+  },
+  searchSpinner: {
+    width: 16,
+    height: 16,
+    transform: [{ scale: 0.8 }],
   },
   searchInput: {
     flex: 1,
@@ -1704,7 +1901,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
 
-  // Customer row: [icon + name ............ copy call]
+  // Customer row
   customerRow: {
     flexDirection: "row",
     justifyContent: "space-between",

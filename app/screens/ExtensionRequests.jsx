@@ -1,18 +1,19 @@
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import { useRouter, useFocusEffect } from "expo-router";
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
 import {
-    Alert,
-    FlatList,
-    Image,
-    Linking,
-    Modal,
-    Pressable,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Image,
+  Linking,
+  Modal,
+  Pressable,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import api from "../../services/api";
@@ -46,26 +47,59 @@ const STATUS_STYLE = {
   rejected: { label: "Rejected", color: C.red, bg: C.redBg },
 };
 
-const formatINR = (n) => "₹" + Number(n).toLocaleString("en-IN");
-const initials = (name) =>
+const formatINR = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
+
+const initials = (name = "") =>
   name
     .split(" ")
+    .filter(Boolean)
     .map((p) => p[0])
     .slice(0, 2)
     .join("")
-    .toUpperCase();
+    .toUpperCase() || "?";
+
+const toDateObj = (v) => {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const fmtDate = (d) =>
+  d
+    ? d.toLocaleDateString("en-IN", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        timeZone: "Asia/Kolkata",
+      })
+    : "N/A";
+
+const fmtTime = (d) =>
+  d
+    ? d.toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Asia/Kolkata",
+      })
+    : "";
+
+const DAY_MS = 1000 * 60 * 60 * 24;
 
 /* ---------- Card ---------- */
 function RequestCard({ item, onAccept, onDecline }) {
-  const status = STATUS_STYLE[item.status];
+  const status = STATUS_STYLE[item.status] || STATUS_STYLE.pending;
   const isPending = item.status === "pending";
+  const shortened = item.extraDays < 0;
+  const absDays = Math.abs(item.extraDays);
 
   return (
     <View style={styles.card}>
       {/* Top row */}
       <View style={styles.cardTop}>
-        <View>
-          <Text style={styles.reqId}>{item.id}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.reqId}>
+            {item.bookingCode || `#${String(item.id).slice(-6).toUpperCase()}`}
+          </Text>
           <Text style={styles.reqTime}>Requested {item.requestedAt}</Text>
         </View>
         <View style={[styles.statusPill, { backgroundColor: status.bg }]}>
@@ -89,14 +123,22 @@ function RequestCard({ item, onAccept, onDecline }) {
           <Text style={styles.carName} numberOfLines={1}>
             {item.vehicle.name}
           </Text>
-          <Text style={styles.carType}>{item.vehicle.type}</Text>
-          <View style={styles.plate}>
-            <Text style={styles.plateText}>{item.vehicle.plate}</Text>
-          </View>
+          {!!(item.vehicle.type || item.vehicle.color) && (
+            <Text style={styles.carType}>
+              {[item.vehicle.type, item.vehicle.color]
+                .filter(Boolean)
+                .join(" • ")}
+            </Text>
+          )}
+          {!!item.vehicle.plate && (
+            <View style={styles.plate}>
+              <Text style={styles.plateText}>{item.vehicle.plate}</Text>
+            </View>
+          )}
         </View>
       </View>
 
-      {/* Date range – the hero of the card */}
+      {/* Date range */}
       <View style={styles.dateBox}>
         <View style={styles.dateCol}>
           <Text style={styles.dateLabel}>Current return</Text>
@@ -107,9 +149,12 @@ function RequestCard({ item, onAccept, onDecline }) {
         </View>
 
         <View style={styles.dateMiddle}>
-          <View style={styles.extraPill}>
+          <View
+            style={[styles.extraPill, shortened && { backgroundColor: C.red }]}
+          >
             <Text style={styles.extraText}>
-              +{item.extraDays} {item.extraDays > 1 ? "days" : "day"}
+              {shortened ? "−" : "+"}
+              {absDays} {absDays === 1 ? "day" : "days"}
             </Text>
           </View>
           <View style={styles.arrowLine}>
@@ -127,10 +172,14 @@ function RequestCard({ item, onAccept, onDecline }) {
         </View>
       </View>
 
-      <View style={styles.chargeRow}>
-        <Text style={styles.chargeLabel}>Extra charge</Text>
-        <Text style={styles.chargeValue}>{formatINR(item.extraAmount)}</Text>
-      </View>
+      {!!item.vehicle.pricePerDay && (
+        <View style={styles.chargeRow}>
+          <Text style={styles.chargeLabel}>Daily rate</Text>
+          <Text style={styles.chargeValue}>
+            {formatINR(item.vehicle.pricePerDay)}/day
+          </Text>
+        </View>
+      )}
 
       <View style={styles.divider} />
 
@@ -141,18 +190,18 @@ function RequestCard({ item, onAccept, onDecline }) {
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.custName}>{item.customer.name}</Text>
-          <Text style={styles.custSub}>
-            {item.customer.phone} • {item.customer.bookingId}
-          </Text>
+          <Text style={styles.custSub}>{item.customer.phone}</Text>
         </View>
-        <Pressable
-          style={styles.callBtn}
-          onPress={() => Linking.openURL(`tel:${item.customer.phone}`)}
-          hitSlop={8}
-          accessibilityLabel={`Call ${item.customer.name}`}
-        >
-          <Feather name="phone" size={16} color={C.green} />
-        </Pressable>
+        {!!item.customer.phone && item.customer.phone !== "Unknown Mobile" && (
+          <Pressable
+            style={styles.callBtn}
+            onPress={() => Linking.openURL(`tel:${item.customer.phone}`)}
+            hitSlop={8}
+            accessibilityLabel={`Call ${item.customer.name}`}
+          >
+            <Feather name="phone" size={16} color={C.green} />
+          </Pressable>
+        )}
       </View>
 
       {/* Reason */}
@@ -165,10 +214,11 @@ function RequestCard({ item, onAccept, onDecline }) {
       </View>
 
       {!isPending && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingHorizontal: 4 }}>
+        <View style={styles.processedRow}>
           <Feather name="user-check" size={12} color={C.muted} />
-          <Text style={{ fontSize: 11, color: C.sub, marginLeft: 6 }}>
-            {item.status === 'approved' ? 'Approved by' : 'Rejected by'} <Text style={{ fontWeight: '600' }}>{item.processedBy}</Text>
+          <Text style={styles.processedText}>
+            {item.status === "approved" ? "Approved by" : "Rejected by"}{" "}
+            <Text style={{ fontWeight: "600" }}>{item.processedBy}</Text>
           </Text>
         </View>
       )}
@@ -210,7 +260,7 @@ export default function ExtensionRequests() {
   const [requests, setRequests] = useState([]);
   const [filter, setFilter] = useState("pending");
   const [loading, setLoading] = useState(true);
-  
+
   const [rejectModalVisible, setRejectModalVisible] = useState(false);
   const [rejectItem, setRejectItem] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -219,40 +269,77 @@ export default function ExtensionRequests() {
     try {
       setLoading(true);
       const response = await api.get("/extensions");
-      if (response.data?.success) {
-        const mapped = response.data.data.map(r => {
-          const booking = r.bookingId || {};
-          const customer = r.customerId || {};
-          
-          const customerName = customer.customerName || customer.name || booking.customerName || 'Unknown Customer';
-          const customerPhone = customer.mobileNumber || booking.customerPhone || 'Unknown Mobile';
-          const vehicleName = booking.vehicleName || 'Unknown Vehicle';
+      if (!response.data?.success) return;
 
-          return {
-            id: r._id,
-            rentalId: booking._id || booking,
-            vehicle: {
-              name: vehicleName,
-              number: booking.vehicleNumber || '',
-            },
-            customer: {
-              name: customerName,
-              phone: customerPhone,
-            },
-            fromDate: booking.toDate ? new Date(booking.toDate).toLocaleDateString() : 'N/A',
-            fromTime: booking.dropTime || 'N/A',
-            toDate: r.requestedDropDate ? new Date(r.requestedDropDate).toLocaleDateString() : 'N/A',
-            rawToDate: r.requestedDropDate,
-            toTime: r.requestedDropTime || 'N/A',
-            extraAmount: 0, // This is determined when extending the active rental, not by the extension request
-            status: r.status,
-            reason: r.reason || 'No reason provided',
-            processedBy: r.processedBy?.name || 'Unknown',
-            createdAt: r.createdAt
-          };
-        });
-        setRequests(mapped.reverse());
-      }
+      const mapped = response.data.data.map((r) => {
+        const booking = r.bookingId || {};
+        const customer = r.customerId || {};
+        const handover = r.handover || {};
+        const v = r.vehicle || {};
+
+        const customerName =
+          customer.customerName ||
+          customer.name ||
+          handover.customer?.fullName ||
+          booking.customerName ||
+          "Unknown Customer";
+        const customerPhone =
+          customer.mobileNumber ||
+          handover.customer?.mobileNumber ||
+          booking.customerPhone ||
+          "Unknown Mobile";
+
+        // Current drop (handover is the source of truth)
+        const currentDrop = toDateObj(r.trip?.dropDateTime || booking.toDate);
+        const requestedDrop = toDateObj(r.requestedDropDate);
+
+        const extraDays =
+          currentDrop && requestedDrop
+            ? Math.round((requestedDrop - currentDrop) / DAY_MS)
+            : 0;
+
+        return {
+          id: r._id,
+          bookingId: booking._id || null,
+          bookingCode: booking.bookingCode || "",
+
+          // IMPORTANT: edit-rental needs the HANDOVER id
+          rentalId: r.handoverId || null,
+          handoverStatus: r.handoverStatus,
+
+          vehicle: {
+            id: v._id || null,
+            name: v.vehicleName || booking.vehicleName || "Unknown Vehicle",
+            plate: v.vehicleNumber || booking.vehicleNumber || "",
+            color: v.color || "",
+            type: v.vehicleType || "",
+            image: v.image || "",
+            pricePerDay: v.pricePerDay || null,
+          },
+
+          customer: { name: customerName, phone: customerPhone },
+
+          pickupDateTime: r.trip?.pickupDateTime || null,
+
+          fromDate: fmtDate(currentDrop),
+          fromTime: booking.dropTime || fmtTime(currentDrop) || "N/A",
+          toDate: fmtDate(requestedDrop),
+          toTime: r.requestedDropTime || fmtTime(requestedDrop) || "N/A",
+          rawToDate: r.requestedDropDate || null,
+          extraDays,
+
+          status: r.status,
+          reason: r.reason || "No reason provided",
+          processedBy: r.processedBy?.name || "Unknown",
+          requestedAt: r.createdAt
+            ? `${fmtDate(toDateObj(r.createdAt))}, ${fmtTime(toDateObj(r.createdAt))}`
+            : "",
+          createdAt: r.createdAt,
+        };
+      });
+
+      // API already sorts newest first
+      setRequests(mapped);
     } catch (err) {
       console.log("Error fetching extensions:", err?.message);
     } finally {
@@ -263,7 +350,7 @@ export default function ExtensionRequests() {
   useFocusEffect(
     useCallback(() => {
       fetchExtensions();
-    }, [])
+    }, []),
   );
 
   const counts = useMemo(
@@ -277,38 +364,66 @@ export default function ExtensionRequests() {
 
   const visible = requests.filter((r) => r.status === filter);
 
-  const updateStatus = async (id, status, rentalId, newDropDate) => {
-    try {
-      await api.put(`/extensions/${id}/status`, { status });
-      setRequests((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, status } : r)),
+  // ----------------------------------------------------------
+  // Navigate to edit-rental with handover id + vehicle data.
+  // Uses an params object — RN's URLSearchParams has no .append().
+  // Every value must be a string for expo-router.
+  // ----------------------------------------------------------
+  const openEditRental = (item) => {
+    if (!item.rentalId) {
+      Alert.alert(
+        "Rental not found",
+        "This request isn't linked to an active rental, so it can't be extended here.",
       );
-
-      if (status === "approved") {
-        const queryParams = new URLSearchParams({ id: rentalId });
-        if (newDropDate) queryParams.append("newDropDate", newDropDate);
-        router.push(`/components/activeRental/edit-rental?${queryParams.toString()}`);
-      }
-    } catch (err) {
-      console.log("Error updating status:", err?.message);
-      Alert.alert("Error", "Could not update status.");
+      return;
     }
+
+    if (item.handoverStatus && item.handoverStatus !== "active") {
+      Alert.alert(
+        "Rental not active",
+        "This rental has already been returned or cancelled.",
+      );
+      return;
+    }
+
+    const params = {
+      rentalId: String(item.rentalId),
+      extensionId: String(item.id),
+
+      // Vehicle
+      vehicleId: item.vehicle.id ? String(item.vehicle.id) : "",
+      vehicleModel: item.vehicle.name || "",
+      plateNumber: item.vehicle.plate || "",
+      vehicleColor: item.vehicle.color || "",
+
+      // Customer
+      customerName: item.customer.name || "",
+      customerPhone: item.customer.phone || "",
+    };
+
+    if (item.pickupDateTime) {
+      params.pickupDateTime = new Date(item.pickupDateTime).toISOString();
+    }
+    if (item.rawToDate) {
+      params.newDropDate = new Date(item.rawToDate).toISOString();
+    }
+
+    router.push({
+      pathname: "/components/activeRental/edit-rental",
+      params,
+    });
   };
 
   const handleAccept = (item) => {
+    const verb = item.extraDays < 0 ? "shortened" : "extended";
     Alert.alert(
-      "Accept extension?",
-      `${item.customer.name}'s rental of ${item.vehicle.name} will be extended to ${item.toDate}, ${item.toTime}.\n\nAdditional charges will be calculated on the next screen.`,
+      "Accept request?",
+      `${item.customer.name}'s rental of ${item.vehicle.name}${
+        item.vehicle.plate ? ` (${item.vehicle.plate})` : ""
+      } will be ${verb} to ${item.toDate}, ${item.toTime}.\n\nCharges will be set on the next screen.`,
       [
         { text: "Cancel", style: "cancel" },
-        { 
-          text: "Proceed to Edit", 
-          onPress: () => {
-            const queryParams = new URLSearchParams({ id: item.rentalId, extensionId: item.id });
-            if (item.rawToDate) queryParams.append("newDropDate", item.rawToDate);
-            router.push(`/components/activeRental/edit-rental?${queryParams.toString()}`);
-          }
-        },
+        { text: "Proceed to Edit", onPress: () => openEditRental(item) },
       ],
     );
   };
@@ -322,10 +437,17 @@ export default function ExtensionRequests() {
   const confirmDecline = async () => {
     if (!rejectItem) return;
     try {
-      const res = await api.put(`/extensions/${rejectItem.id}/status`, { status: "rejected", rejectReason });
+      const res = await api.put(`/extensions/${rejectItem.id}/status`, {
+        status: "rejected",
+        rejectReason,
+      });
       const processedBy = res.data?.data?.processedBy?.name || "Unknown";
       setRequests((prev) =>
-        prev.map((r) => (r.id === rejectItem.id ? { ...r, status: "rejected", processedBy } : r)),
+        prev.map((r) =>
+          r.id === rejectItem.id
+            ? { ...r, status: "rejected", processedBy }
+            : r,
+        ),
       );
       setRejectModalVisible(false);
       setRejectItem(null);
@@ -335,25 +457,32 @@ export default function ExtensionRequests() {
     }
   };
 
-  const EmptyState = () => (
-    <View style={styles.empty}>
-      <View style={styles.emptyIcon}>
-        <MaterialCommunityIcons
-          name="calendar-check"
-          size={34}
-          color={C.accent}
-        />
+  const EmptyState = () =>
+    loading ? (
+      <View style={styles.empty}>
+        <ActivityIndicator size="large" color={C.accent} />
       </View>
-      <Text style={styles.emptyTitle}>
-        {filter === "pending" ? "No requests waiting" : `No ${filter} requests`}
-      </Text>
-      <Text style={styles.emptySub}>
-        {filter === "pending"
-          ? "When a customer asks to keep a car longer, it will show up here."
-          : "Requests you respond to will be listed here."}
-      </Text>
-    </View>
-  );
+    ) : (
+      <View style={styles.empty}>
+        <View style={styles.emptyIcon}>
+          <MaterialCommunityIcons
+            name="calendar-check"
+            size={34}
+            color={C.accent}
+          />
+        </View>
+        <Text style={styles.emptyTitle}>
+          {filter === "pending"
+            ? "No requests waiting"
+            : `No ${filter} requests`}
+        </Text>
+        <Text style={styles.emptySub}>
+          {filter === "pending"
+            ? "When a customer asks to change their return date, it will show up here."
+            : "Requests you respond to will be listed here."}
+        </Text>
+      </View>
+    );
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -371,7 +500,7 @@ export default function ExtensionRequests() {
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Extension Requests</Text>
           <Text style={styles.subtitle}>
-            {counts.pending} waiting for your reply
+            {counts.pending || 0} waiting for your reply
           </Text>
         </View>
       </View>
@@ -393,7 +522,7 @@ export default function ExtensionRequests() {
                 <Text
                   style={[styles.tabCountText, active && { color: C.accent }]}
                 >
-                  {counts[f.key]}
+                  {counts[f.key] || 0}
                 </Text>
               </View>
             </Pressable>
@@ -403,7 +532,7 @@ export default function ExtensionRequests() {
 
       <FlatList
         data={visible}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => String(item.id)}
         renderItem={({ item }) => (
           <RequestCard
             item={item}
@@ -417,6 +546,8 @@ export default function ExtensionRequests() {
         ]}
         ListEmptyComponent={EmptyState}
         showsVerticalScrollIndicator={false}
+        refreshing={loading && requests.length > 0}
+        onRefresh={fetchExtensions}
       />
 
       {/* Reject Reason Modal */}
@@ -424,9 +555,7 @@ export default function ExtensionRequests() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Reject Extension</Text>
-            <Text style={styles.modalSub}>
-              Provide a reason for rejection.
-            </Text>
+            <Text style={styles.modalSub}>Provide a reason for rejection.</Text>
 
             <TextInput
               style={styles.textInput}
@@ -552,6 +681,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "flex-start",
     marginBottom: 14,
+    gap: 8,
   },
   reqId: { fontSize: 14, fontWeight: "700", color: C.text },
   reqTime: { fontSize: 12, color: C.muted, marginTop: 2 },
@@ -674,6 +804,14 @@ const styles = StyleSheet.create({
   reasonLabel: { fontSize: 12, fontWeight: "600", color: C.sub },
   reasonText: { fontSize: 14, lineHeight: 20, color: C.text },
 
+  processedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 12,
+    paddingHorizontal: 4,
+  },
+  processedText: { fontSize: 11, color: C.sub, marginLeft: 6 },
+
   actions: { flexDirection: "row", gap: 10, marginTop: 16 },
   btn: {
     flex: 1,
@@ -715,11 +853,46 @@ const styles = StyleSheet.create({
     marginTop: 6,
     lineHeight: 20,
   },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  modalContent: { backgroundColor: '#FFF', width: '85%', borderRadius: 16, padding: 20 },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A', marginBottom: 8 },
-  modalSub: { fontSize: 14, color: '#64748B', marginBottom: 16, lineHeight: 20 },
-  textInput: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, padding: 12, fontSize: 15, color: '#0F172A', textAlignVertical: 'top', minHeight: 80 },
-  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 24 },
-  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 }
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    backgroundColor: "#FFF",
+    width: "85%",
+    borderRadius: 16,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#0F172A",
+    marginBottom: 8,
+  },
+  modalSub: {
+    fontSize: 14,
+    color: "#64748B",
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  textInput: {
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 15,
+    color: "#0F172A",
+    textAlignVertical: "top",
+    minHeight: 80,
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 12,
+    marginTop: 24,
+  },
+  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
 });

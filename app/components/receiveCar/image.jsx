@@ -2,7 +2,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -92,7 +92,6 @@ const CAR_TYRE_TOOLKIT_SHOTS = [
 /* ==========================
    BIKE PHOTOS
    Only the 4 exterior photos are required; the rest are optional.
-   Field names match the backend (tyreFront / tyreRear / helmet).
 ========================== */
 
 const BIKE_EXTERIOR_SHOTS = [
@@ -141,26 +140,116 @@ const BIKE_OPTIONAL_SHOTS = [
     icon: "racing-helmet",
     detail: "Returned & condition",
   },
-  {
-    key: "toolkit",
-    label: "Toolkit",
-    icon: "toolbox",
-    detail: "If provided",
-  },
+  { key: "toolkit", label: "Toolkit", icon: "toolbox", detail: "If provided" },
 ];
 
-const toFormFile = (uri, fallbackName) => {
-  const cleanUri = Platform.OS === "ios" ? uri.replace("file://", "") : uri;
-  const filename = uri.split("/").pop() || `${fallbackName}.jpg`;
-  const match = /\.(\w+)$/.exec(filename);
-  const ext = match ? match[1].toLowerCase() : "jpg";
-  const type = ext === "png" ? "image/png" : "image/jpeg";
+const MAX_ADDITIONAL = 20;
 
+// Where to go after a successful return. Change this if your home
+// screen lives at a different route (e.g. "/(tabs)/home").
+const HOME_ROUTE = "/";
+
+/* ==========================
+   PHOTO UPLOAD HELPERS
+   take photo -> uploadReturnImage() -> Cloudinary -> { url, publicId }
+========================== */
+
+const UPLOAD_TIMEOUT_MS = 60000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const makeLocalId = () =>
+  `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const toUploadFile = (uri, field) => {
+  const fromUri = uri.split("/").pop() || "";
+  const ext = (/\.(\w+)$/.exec(fromUri)?.[1] || "jpg").toLowerCase();
   return {
-    uri: Platform.OS === "ios" ? uri : cleanUri,
-    name: filename,
-    type,
+    uri,
+    name: `${field}_${Date.now()}.${ext}`,
+    type:
+      ext === "png"
+        ? "image/png"
+        : ext === "webp"
+          ? "image/webp"
+          : "image/jpeg",
   };
+};
+
+const getUploadErrorMessage = (
+  error,
+  fallback = "Upload failed. Check your connection and retry.",
+) => {
+  if (error?.response?.data?.message) return error.response.data.message;
+  if (error?.code === "ECONNABORTED") return "Upload timed out. Please retry.";
+  if (error?.message === "Network Error")
+    return "No internet connection. Please retry.";
+  return fallback;
+};
+
+// Network errors and 5xx get one automatic retry; 4xx don't.
+const isRetryable = (error) => !error?.response || error.response.status >= 500;
+
+// Upload ONE photo. Resolves to { field, url, publicId }.
+const uploadReturnImage = async ({ handoverId, field, uri, token }) => {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const formData = new FormData();
+      formData.append("image", toUploadFile(uri, field));
+      const res = await api.post(
+        `/vehicle-return/images/${handoverId}/${field}`,
+        formData,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "multipart/form-data",
+          },
+          timeout: UPLOAD_TIMEOUT_MS,
+        },
+      );
+      return res.data.data;
+    } catch (error) {
+      lastError = error;
+      if (attempt === 1 || !isRetryable(error)) break;
+      await sleep(1500);
+    }
+  }
+  throw lastError;
+};
+
+// Remove an old photo from Cloudinary (retake / remove). Never throws.
+const deleteReturnImage = ({ handoverId, field, publicId, token }) => {
+  if (!publicId) return Promise.resolve();
+  return api
+    .delete(`/vehicle-return/images/${handoverId}/${field}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { publicId },
+    })
+    .catch(() => {});
+};
+
+const toUploadedItem = ({ url, publicId }) => ({
+  id: publicId,
+  url,
+  publicId,
+  localUri: null,
+  status: "uploaded",
+  error: null,
+});
+
+const toImagePayload = (item) =>
+  item?.status === "uploaded" && item.url && item.publicId
+    ? { url: item.url, publicId: item.publicId }
+    : null;
+
+const safeParse = (value, fallback) => {
+  if (value === undefined || value === null || value === "") return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
 };
 
 export default function ReceiveCarImageScreen() {
@@ -176,7 +265,7 @@ export default function ReceiveCarImageScreen() {
     kilometersAtReturn,
     hasDamage,
     damageNotes,
-    damageImages,
+    damageImages: damageImagesParam,
     repairEstimate,
     repairDays,
     lateReturnFine,
@@ -193,41 +282,85 @@ export default function ReceiveCarImageScreen() {
     inspection,
   } = params;
 
-  // Category comes from the previous screen, which read it from
-  // vehicle.category in the /handover/single/:id response.
   const isBike =
     String(vehicleCategory || "").toLowerCase() === "bike" ||
     isBikeParam === "yes";
 
-  // Required photos block submit; optional photos are sent only if taken.
   const exteriorShots = isBike ? BIKE_EXTERIOR_SHOTS : CAR_EXTERIOR_SHOTS;
   const secondaryShots = isBike ? BIKE_OPTIONAL_SHOTS : CAR_TYRE_TOOLKIT_SHOTS;
   const secondaryRequired = !isBike;
-
   const requiredShots = secondaryRequired
     ? [...exteriorShots, ...secondaryShots]
     : exteriorShots;
-  const optionalShots = secondaryRequired ? [] : secondaryShots;
 
+  const isDamaged = hasDamage === "yes";
+
+  // shots[key] = { url, publicId, localUri, status: uploaded|uploading|failed, error }
   const [shots, setShots] = useState({});
-
+  // [{ id, url, publicId, localUri, status, error }]
   const [additionalImages, setAdditionalImages] = useState([]);
   const [submitting, setSubmitting] = useState(false);
 
-  // Guards against a photo tile being tapped again while the camera from
-  // the previous tap is still opening/resolving (double-tap crash).
+  // Damage photos taken on step 1 arrive as local URIs and are uploaded
+  // as soon as this screen opens: [{ id, url, publicId, localUri, status }]
+  const [damageImages, setDamageImages] = useState(() => {
+    if (!isDamaged) return [];
+    const list = safeParse(damageImagesParam, []);
+    return (Array.isArray(list) ? list : [])
+      .filter((uri) => typeof uri === "string" && uri)
+      .map((uri) => ({
+        id: makeLocalId(),
+        url: null,
+        publicId: null,
+        localUri: uri,
+        status: "uploading",
+        error: null,
+      }));
+  });
+
+  // Guards the camera against double taps (only one camera at a time).
+  // Uploads themselves run in parallel in the background.
   const [capturingKey, setCapturingKey] = useState(null);
   const isCapturing = capturingKey !== null;
 
-  const capturedDamageImages = (() => {
-    try {
-      return damageImages ? JSON.parse(damageImages) : [];
-    } catch {
-      return [];
-    }
-  })();
+  /* ---------- Damage photos (from step 1) ---------- */
 
-  const isDamaged = hasDamage === "yes";
+  const uploadDamage = async (id, localUri) => {
+    setDamageImages((prev) =>
+      prev.map((i) =>
+        i.id === id ? { ...i, status: "uploading", error: null } : i,
+      ),
+    );
+    try {
+      const image = await uploadReturnImage({
+        handoverId,
+        field: "damageImages",
+        uri: localUri,
+        token,
+      });
+      setDamageImages((prev) =>
+        prev.map((i) => (i.id === id ? toUploadedItem(image) : i)),
+      );
+    } catch (error) {
+      setDamageImages((prev) =>
+        prev.map((i) =>
+          i.id === id
+            ? { ...i, status: "failed", error: getUploadErrorMessage(error) }
+            : i,
+        ),
+      );
+    }
+  };
+
+  // Start uploading step-1 damage photos once, when the screen opens.
+  const damageStartedRef = useRef(false);
+  useEffect(() => {
+    if (damageStartedRef.current || !handoverId || !token) return;
+    damageStartedRef.current = true;
+    damageImages.forEach((item) => uploadDamage(item.id, item.localUri));
+  }, [handoverId, token]);
+
+  /* ---------- Camera ---------- */
 
   const openCamera = async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -238,7 +371,6 @@ export default function ReceiveCarImageScreen() {
       );
       return null;
     }
-    // Straight to capture, no crop screen, default camera ratio.
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ["images"],
       quality: 0.7,
@@ -249,59 +381,210 @@ export default function ReceiveCarImageScreen() {
     return null;
   };
 
-  const captureShot = async (key) => {
-    if (isCapturing) return;
-
+  const takePhoto = async (captureKey) => {
+    if (isCapturing) return null;
+    setCapturingKey(captureKey);
     try {
-      setCapturingKey(key);
-      const uri = await openCamera();
-      if (uri) setShots((prev) => ({ ...prev, [key]: uri }));
-    } catch (error) {
+      return await openCamera();
+    } catch {
       Alert.alert("Error", "Unable to capture the photo. Please try again.");
+      return null;
     } finally {
       setCapturingKey(null);
     }
   };
 
+  /* ---------- Single-slot shots ---------- */
+
+  const uploadShot = async (key, localUri) => {
+    // Photo currently in this slot (for a retake) — removed from
+    // Cloudinary once the new one is safely uploaded.
+    const oldPublicId = shots[key]?.publicId;
+
+    setShots((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev[key] || {}),
+        localUri,
+        status: "uploading",
+        error: null,
+      },
+    }));
+
+    try {
+      const image = await uploadReturnImage({
+        handoverId,
+        field: key,
+        uri: localUri,
+        token,
+      });
+      setShots((prev) => ({ ...prev, [key]: toUploadedItem(image) }));
+      if (oldPublicId && oldPublicId !== image.publicId) {
+        deleteReturnImage({
+          handoverId,
+          field: key,
+          publicId: oldPublicId,
+          token,
+        });
+      }
+    } catch (error) {
+      setShots((prev) => ({
+        ...prev,
+        [key]: {
+          ...(prev[key] || {}),
+          localUri,
+          status: "failed",
+          error: getUploadErrorMessage(error),
+        },
+      }));
+    }
+  };
+
+  const captureShot = async (key) => {
+    if (shots[key]?.status === "uploading") return;
+    const uri = await takePhoto(key);
+    if (uri) uploadShot(key, uri);
+  };
+
+  const retryShot = (key) => {
+    const localUri = shots[key]?.localUri;
+    if (localUri) uploadShot(key, localUri);
+  };
+
   const removeShot = (key) => {
+    const current = shots[key];
+    if (!current || current.status === "uploading") return;
+
     setShots((prev) => {
       const next = { ...prev };
       delete next[key];
       return next;
     });
+
+    deleteReturnImage({
+      handoverId,
+      field: key,
+      publicId: current.publicId,
+      token,
+    });
   };
 
-  const captureAdditionalImage = async () => {
-    if (isCapturing) return;
+  /* ---------- Additional photos (list) ---------- */
+
+  const uploadAdditional = async (id, localUri) => {
+    setAdditionalImages((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, status: "uploading", error: null } : item,
+      ),
+    );
 
     try {
-      setCapturingKey("additional");
-      const uri = await openCamera();
-      if (uri) setAdditionalImages((prev) => [...prev, uri]);
+      const image = await uploadReturnImage({
+        handoverId,
+        field: "additionalImages",
+        uri: localUri,
+        token,
+      });
+      setAdditionalImages((prev) =>
+        prev.map((item) => (item.id === id ? toUploadedItem(image) : item)),
+      );
     } catch (error) {
-      Alert.alert("Error", "Unable to capture the photo. Please try again.");
-    } finally {
-      setCapturingKey(null);
+      setAdditionalImages((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? { ...item, status: "failed", error: getUploadErrorMessage(error) }
+            : item,
+        ),
+      );
     }
   };
 
-  const removeAdditionalImage = (index) => {
-    setAdditionalImages((prev) => prev.filter((_, i) => i !== index));
+  const captureAdditionalImage = async () => {
+    if (additionalImages.length >= MAX_ADDITIONAL) {
+      Alert.alert(
+        "Limit reached",
+        `You can add up to ${MAX_ADDITIONAL} extra photos.`,
+      );
+      return;
+    }
+    const uri = await takePhoto("additional");
+    if (!uri) return;
+
+    const id = makeLocalId();
+    setAdditionalImages((prev) => [
+      ...prev,
+      {
+        id,
+        url: null,
+        publicId: null,
+        localUri: uri,
+        status: "uploading",
+        error: null,
+      },
+    ]);
+    uploadAdditional(id, uri);
   };
 
-  const requiredCompletedCount = requiredShots.filter(
-    (s) => !!shots[s.key],
+  const removeAdditionalImage = (item) => {
+    if (item.status === "uploading") return;
+
+    setAdditionalImages((prev) => prev.filter((i) => i.id !== item.id));
+    deleteReturnImage({
+      handoverId,
+      field: "additionalImages",
+      publicId: item.publicId,
+      token,
+    });
+  };
+
+  /* ---------- Derived state ---------- */
+
+  const isDone = (key) => shots[key]?.status === "uploaded";
+
+  const requiredCompletedCount = requiredShots.filter((s) =>
+    isDone(s.key),
   ).length;
   const allRequiredCaptured = requiredCompletedCount === requiredShots.length;
+  const exteriorCompletedCount = exteriorShots.filter((s) =>
+    isDone(s.key),
+  ).length;
+  const secondaryCompletedCount = secondaryShots.filter((s) =>
+    isDone(s.key),
+  ).length;
 
-  const exteriorCompletedCount = exteriorShots.filter(
-    (s) => !!shots[s.key],
+  const allItems = [
+    ...Object.values(shots),
+    ...additionalImages,
+    ...damageImages,
+  ];
+  const uploadingCount = allItems.filter(
+    (i) => i.status === "uploading",
   ).length;
-  const secondaryCompletedCount = secondaryShots.filter(
-    (s) => !!shots[s.key],
-  ).length;
+  const failedCount = allItems.filter((i) => i.status === "failed").length;
+
+  /* ---------- Submit ---------- */
+
+  // Clears the whole receive flow (list -> detail -> photos) from the
+  // stack, so Back from Home can't reopen an already-submitted return.
+  const goHome = () => {
+    if (router.canDismiss()) router.dismissAll();
+    router.replace(HOME_ROUTE);
+  };
 
   const handleSubmit = async () => {
+    if (uploadingCount > 0) {
+      Alert.alert("Please wait", "Some photos are still uploading.");
+      return;
+    }
+
+    if (failedCount > 0) {
+      Alert.alert(
+        "Upload failed",
+        "Some photos didn't upload. Tap Retry on them, or remove them, before submitting.",
+      );
+      return;
+    }
+
     if (!allRequiredCaptured) {
       Alert.alert(
         "Missing Photos",
@@ -312,83 +595,67 @@ export default function ReceiveCarImageScreen() {
       return;
     }
 
-    if (isDamaged && capturedDamageImages.length === 0) {
+    if (
+      isDamaged &&
+      damageImages.filter((i) => i.status === "uploaded").length === 0
+    ) {
       Alert.alert(
         "Missing Evidence",
-        "Damage photos are required when damage is marked on the return form.",
+        "Damage photos are required when damage is marked on the return form. Go back and add them.",
       );
       return;
     }
 
     try {
       setSubmitting(true);
-      const formData = new FormData();
 
-      formData.append("fuelLevel", String(fuelLevel ?? ""));
-      formData.append("kilometersAtReturn", String(kilometersAtReturn ?? ""));
-      formData.append("hasDamage", String(isDamaged));
-      formData.append("damageNotes", damageNotes || "");
-      formData.append("inspection", inspection || "[]");
-
-      formData.append("repairEstimate", String(repairEstimate ?? ""));
-      formData.append("repairDays", String(repairDays ?? ""));
-
-      formData.append("lateReturnFine", String(lateReturnFine ?? ""));
-      formData.append("extraKmFine", String(extraKmFine ?? ""));
-      formData.append("fuelUsageAmount", String(fuelUsageAmount ?? ""));
-      formData.append("amountCollected", String(amountCollected ?? ""));
-      formData.append("paymentMode", paymentMode || "Cash");
-      formData.append("paymentBreakdown", paymentBreakdown || "{}");
-      formData.append("balanceReason", balanceReason || "");
-      formData.append("upiLast4", upiLast4 || "[]");
-
-      formData.append("needsMaintenance", String(needsMaintenance === "yes"));
-      formData.append("maintenanceReason", maintenanceReason || "");
-      formData.append("maintenanceDays", String(maintenanceDays ?? ""));
-
-      // Required photos — all present (checked above).
-      requiredShots.forEach(({ key }) => {
-        formData.append(key, toFormFile(shots[key], key));
+      const imagesPayload = {};
+      Object.entries(shots).forEach(([key, item]) => {
+        const payload = toImagePayload(item);
+        if (payload) imagesPayload[key] = payload;
       });
 
-      // Optional photos — only the ones actually taken.
-      optionalShots.forEach(({ key }) => {
-        if (shots[key]) {
-          formData.append(key, toFormFile(shots[key], key));
-        }
-      });
+      // Photos are already on Cloudinary — this is a small JSON request.
+      await api.post(
+        `/vehicle-return/receive/${handoverId}`,
+        {
+          fuelLevel: fuelLevel ?? "",
+          kilometersAtReturn: kilometersAtReturn ?? "",
+          hasDamage: isDamaged,
+          damageNotes: damageNotes || "",
+          inspection: safeParse(inspection, []),
+          repairEstimate: repairEstimate ?? "",
+          repairDays: repairDays ?? "",
+          lateReturnFine: lateReturnFine ?? "",
+          extraKmFine: extraKmFine ?? "",
+          fuelUsageAmount: fuelUsageAmount ?? "",
+          amountCollected: amountCollected ?? "",
+          paymentMode: paymentMode || "Cash",
+          paymentBreakdown: safeParse(paymentBreakdown, {}),
+          upiLast4: safeParse(upiLast4, []),
+          balanceReason: balanceReason || "",
+          needsMaintenance: needsMaintenance === "yes",
+          maintenanceReason: maintenanceReason || "",
+          maintenanceDays: maintenanceDays ?? "",
 
-      if (isDamaged) {
-        capturedDamageImages.forEach((uri, index) => {
-          formData.append("damageImages", toFormFile(uri, `damage_${index}`));
-        });
-      }
-
-      additionalImages.forEach((uri, index) => {
-        formData.append(
-          "additionalImages",
-          toFormFile(uri, `additional_${index}`),
-        );
-      });
-
-      await api.post(`/vehicle-return/receive/${handoverId}`, formData, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "multipart/form-data",
+          images: imagesPayload,
+          damageImages: isDamaged
+            ? damageImages.map(toImagePayload).filter(Boolean)
+            : [],
+          additionalImages: additionalImages
+            .map(toImagePayload)
+            .filter(Boolean),
         },
-      });
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
 
       Alert.alert(
         "Return Completed",
         isBike
           ? "Bike return has been recorded successfully."
           : "Vehicle return has been recorded successfully.",
-        [
-          {
-            text: "Done",
-            onPress: () => router.replace("/components/receiveCar/list"),
-          },
-        ],
+        [{ text: "Done", onPress: goHome }],
+        { cancelable: false },
       );
     } catch (error) {
       Alert.alert(
@@ -401,26 +668,52 @@ export default function ReceiveCarImageScreen() {
     }
   };
 
+  /* ---------- Render ---------- */
+
   const renderShotGrid = (shotList, { optional = false } = {}) => (
     <View style={styles.shotGrid}>
       {shotList.map(({ key, label, icon, detail }) => {
-        const uri = shots[key];
+        const shot = shots[key];
         const tileCapturing = capturingKey === key;
+        const previewUri =
+          shot?.status === "uploaded" ? shot.url : shot?.localUri || shot?.url;
+
         return (
           <View key={key} style={styles.shotCardWrapper}>
-            {uri ? (
+            {shot && previewUri ? (
               <View style={styles.imageCard}>
-                <Image source={{ uri }} style={styles.shotImage} />
-                <View style={styles.imageOverlayTop}>
-                  <View style={styles.completedBadge}>
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={16}
-                      color="#16A34A"
-                    />
-                    <Text style={styles.completedBadgeText}>Captured</Text>
+                <Image source={{ uri: previewUri }} style={styles.shotImage} />
+
+                {shot.status === "uploading" && (
+                  <View style={styles.uploadingOverlay}>
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                    <Text style={styles.overlayText}>Uploading…</Text>
                   </View>
-                  {optional && (
+                )}
+
+                <View style={styles.imageOverlayTop}>
+                  {shot.status === "uploaded" && (
+                    <View style={styles.completedBadge}>
+                      <Ionicons name="cloud-done" size={14} color="#16A34A" />
+                      <Text style={styles.completedBadgeText}>Uploaded</Text>
+                    </View>
+                  )}
+                  {shot.status === "failed" && (
+                    <View style={[styles.completedBadge, styles.failedBadge]}>
+                      <Ionicons name="alert-circle" size={14} color="#DC2626" />
+                      <Text
+                        style={[
+                          styles.completedBadgeText,
+                          { color: "#DC2626" },
+                        ]}
+                      >
+                        Not uploaded
+                      </Text>
+                    </View>
+                  )}
+                  {shot.status === "uploading" && <View />}
+
+                  {optional && shot.status !== "uploading" && (
                     <TouchableOpacity
                       style={styles.removeShotBadge}
                       onPress={() => removeShot(key)}
@@ -431,22 +724,41 @@ export default function ReceiveCarImageScreen() {
                     </TouchableOpacity>
                   )}
                 </View>
-                <TouchableOpacity
-                  style={[
-                    styles.retakeButton,
-                    tileCapturing && { opacity: 0.6 },
-                  ]}
-                  activeOpacity={0.8}
-                  onPress={() => captureShot(key)}
-                  disabled={isCapturing}
-                >
-                  {tileCapturing ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <Ionicons name="camera-reverse" size={16} color="#FFFFFF" />
-                  )}
-                  <Text style={styles.retakeButtonText}>Retake</Text>
-                </TouchableOpacity>
+
+                {shot.status === "failed" && (
+                  <TouchableOpacity
+                    style={[styles.retakeButton, styles.retryButton]}
+                    activeOpacity={0.8}
+                    onPress={() => retryShot(key)}
+                  >
+                    <Ionicons name="refresh" size={15} color="#FFFFFF" />
+                    <Text style={styles.retakeButtonText}>Retry</Text>
+                  </TouchableOpacity>
+                )}
+
+                {shot.status !== "uploading" && (
+                  <TouchableOpacity
+                    style={[
+                      styles.retakeButton,
+                      shot.status === "failed" && styles.retakeButtonLeft,
+                      tileCapturing && { opacity: 0.6 },
+                    ]}
+                    activeOpacity={0.8}
+                    onPress={() => captureShot(key)}
+                    disabled={isCapturing}
+                  >
+                    {tileCapturing ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Ionicons
+                        name="camera-reverse"
+                        size={16}
+                        color="#FFFFFF"
+                      />
+                    )}
+                    <Text style={styles.retakeButtonText}>Retake</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             ) : (
               <TouchableOpacity
@@ -502,6 +814,9 @@ export default function ReceiveCarImageScreen() {
     </View>
   );
 
+  const submitDisabled =
+    !allRequiredCaptured || submitting || uploadingCount > 0;
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar backgroundColor="#08142E" barStyle="light-content" />
@@ -530,7 +845,7 @@ export default function ReceiveCarImageScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Exterior Photos Section (required for car & bike) */}
+        {/* Exterior Photos */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <View style={styles.cardHeaderTitleRow}>
@@ -570,7 +885,7 @@ export default function ReceiveCarImageScreen() {
           {renderShotGrid(exteriorShots)}
         </View>
 
-        {/* Car: Tyre & Toolkit (required) | Bike: Tyres, Helmet & Toolkit (optional) */}
+        {/* Car: Tyre & Toolkit (required) | Bike: optional */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <View style={styles.cardHeaderTitleRow}>
@@ -626,7 +941,7 @@ export default function ReceiveCarImageScreen() {
           {renderShotGrid(secondaryShots, { optional: !secondaryRequired })}
         </View>
 
-        {/* Damage Evidence Section */}
+        {/* Damage Evidence (uploaded on step 1) */}
         {isDamaged && (
           <View style={[styles.card, styles.damageCardBorder]}>
             <View style={styles.cardHeader}>
@@ -642,20 +957,45 @@ export default function ReceiveCarImageScreen() {
               </View>
               <View style={styles.damageBadge}>
                 <Text style={styles.damageBadgeText}>
-                  {capturedDamageImages.length} Saved
+                  {damageImages.filter((i) => i.status === "uploaded").length}/
+                  {damageImages.length} Uploaded
                 </Text>
               </View>
             </View>
 
-            {capturedDamageImages.length > 0 ? (
+            {damageImages.length > 0 ? (
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.horizontalScrollList}
               >
-                {capturedDamageImages.map((uri, index) => (
-                  <View key={index} style={styles.damageImageContainer}>
-                    <Image source={{ uri }} style={styles.damageThumb} />
+                {damageImages.map((item, index) => (
+                  <View key={item.id} style={styles.damageImageContainer}>
+                    <Image
+                      source={{ uri: item.url || item.localUri }}
+                      style={styles.damageThumb}
+                    />
+                    {item.status === "uploading" && (
+                      <View
+                        style={[styles.uploadingOverlay, { borderRadius: 10 }]}
+                      >
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      </View>
+                    )}
+                    {item.status === "failed" && (
+                      <TouchableOpacity
+                        style={[
+                          styles.uploadingOverlay,
+                          styles.failedOverlay,
+                          { borderRadius: 10 },
+                        ]}
+                        onPress={() => uploadDamage(item.id, item.localUri)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="refresh" size={18} color="#FFFFFF" />
+                        <Text style={styles.overlayText}>Retry</Text>
+                      </TouchableOpacity>
+                    )}
                     <View style={styles.damageIndexBadge}>
                       <Text style={styles.damageIndexText}>#{index + 1}</Text>
                     </View>
@@ -666,15 +1006,15 @@ export default function ReceiveCarImageScreen() {
               <View style={styles.warningContainer}>
                 <Ionicons name="warning-outline" size={18} color="#DC2626" />
                 <Text style={styles.warningText}>
-                  No damage images captured on step 1. Please return back to
-                  capture evidence.
+                  No damage images captured on step 1. Please go back to capture
+                  evidence.
                 </Text>
               </View>
             )}
           </View>
         )}
 
-        {/* Additional Photos Section */}
+        {/* Additional Photos */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <View style={styles.cardHeaderTitleRow}>
@@ -693,16 +1033,42 @@ export default function ReceiveCarImageScreen() {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.horizontalScrollList}
             >
-              {additionalImages.map((uri, index) => (
-                <View key={index} style={styles.additionalImageWrap}>
-                  <Image source={{ uri }} style={styles.additionalThumb} />
-                  <TouchableOpacity
-                    style={styles.removeImageBadge}
-                    activeOpacity={0.8}
-                    onPress={() => removeAdditionalImage(index)}
-                  >
-                    <Ionicons name="close" size={14} color="#FFFFFF" />
-                  </TouchableOpacity>
+              {additionalImages.map((item) => (
+                <View key={item.id} style={styles.additionalImageWrap}>
+                  <Image
+                    source={{ uri: item.url || item.localUri }}
+                    style={styles.additionalThumb}
+                  />
+                  {item.status === "uploading" && (
+                    <View
+                      style={[styles.uploadingOverlay, { borderRadius: 10 }]}
+                    >
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    </View>
+                  )}
+                  {item.status === "failed" && (
+                    <TouchableOpacity
+                      style={[
+                        styles.uploadingOverlay,
+                        styles.failedOverlay,
+                        { borderRadius: 10 },
+                      ]}
+                      onPress={() => uploadAdditional(item.id, item.localUri)}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="refresh" size={18} color="#FFFFFF" />
+                      <Text style={styles.overlayText}>Retry</Text>
+                    </TouchableOpacity>
+                  )}
+                  {item.status !== "uploading" && (
+                    <TouchableOpacity
+                      style={styles.removeImageBadge}
+                      activeOpacity={0.8}
+                      onPress={() => removeAdditionalImage(item)}
+                    >
+                      <Ionicons name="close" size={14} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  )}
                 </View>
               ))}
             </ScrollView>
@@ -726,14 +1092,23 @@ export default function ReceiveCarImageScreen() {
 
       {/* Sticky Bottom Action Bar */}
       <View style={styles.bottomFooter}>
+        {(uploadingCount > 0 || failedCount > 0) && (
+          <Text
+            style={[styles.footerHint, failedCount > 0 && { color: "#DC2626" }]}
+          >
+            {uploadingCount > 0
+              ? `Uploading ${uploadingCount} photo${uploadingCount > 1 ? "s" : ""}…`
+              : `${failedCount} photo${failedCount > 1 ? "s" : ""} failed — tap Retry`}
+          </Text>
+        )}
         <TouchableOpacity
           style={[
             styles.primarySubmitBtn,
-            (!allRequiredCaptured || submitting) && styles.disabledSubmitBtn,
+            submitDisabled && styles.disabledSubmitBtn,
           ]}
           activeOpacity={0.85}
           onPress={handleSubmit}
-          disabled={!allRequiredCaptured || submitting}
+          disabled={submitDisabled}
         >
           {submitting ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
@@ -756,10 +1131,7 @@ export default function ReceiveCarImageScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F1F5F9",
-  },
+  container: { flex: 1, backgroundColor: "#F1F5F9" },
   header: {
     paddingTop: Platform.OS === "android" ? StatusBar.currentHeight || 40 : 12,
     paddingHorizontal: 16,
@@ -776,9 +1148,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  headerTitleContainer: {
-    alignItems: "center",
-  },
+  headerTitleContainer: { alignItems: "center" },
   headerTitle: {
     color: "#FFFFFF",
     fontSize: 18,
@@ -791,10 +1161,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: "500",
   },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 100,
-  },
+  scrollContent: { padding: 16, paddingBottom: 120 },
   card: {
     backgroundColor: "#FFFFFF",
     borderRadius: 16,
@@ -808,10 +1175,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  damageCardBorder: {
-    borderColor: "#FCA5A5",
-    backgroundColor: "#FEF2F2",
-  },
+  damageCardBorder: { borderColor: "#FCA5A5", backgroundColor: "#FEF2F2" },
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -842,11 +1206,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 6,
   },
-  optionalPillText: {
-    fontSize: 10.5,
-    fontWeight: "700",
-    color: "#64748B",
-  },
+  optionalPillText: { fontSize: 10.5, fontWeight: "700", color: "#64748B" },
   cardDescription: {
     fontSize: 13,
     color: "#64748B",
@@ -859,26 +1219,16 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 12,
   },
-  progressBadgeComplete: {
-    backgroundColor: "#DCFCE7",
-  },
-  progressBadgeText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#475569",
-  },
-  progressBadgeTextComplete: {
-    color: "#15803D",
-  },
+  progressBadgeComplete: { backgroundColor: "#DCFCE7" },
+  progressBadgeText: { fontSize: 12, fontWeight: "600", color: "#475569" },
+  progressBadgeTextComplete: { color: "#15803D" },
   shotGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
     rowGap: 14,
   },
-  shotCardWrapper: {
-    width: "48%",
-  },
+  shotCardWrapper: { width: "48%" },
   placeholderCard: {
     width: "100%",
     height: 124,
@@ -895,10 +1245,7 @@ const styles = StyleSheet.create({
     borderColor: "#CBD5E1",
     backgroundColor: "#F8FAFC",
   },
-  placeholderIconContainer: {
-    position: "relative",
-    marginBottom: 6,
-  },
+  placeholderIconContainer: { position: "relative", marginBottom: 6 },
   cameraBadgeIcon: {
     position: "absolute",
     bottom: -2,
@@ -907,11 +1254,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 2,
   },
-  placeholderLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#1E3A8A",
-  },
+  placeholderLabel: { fontSize: 13, fontWeight: "700", color: "#1E3A8A" },
   placeholderDetail: {
     fontSize: 10,
     color: "#60A5FA",
@@ -926,11 +1269,16 @@ const styles = StyleSheet.create({
     position: "relative",
     backgroundColor: "#0F172A",
   },
-  shotImage: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "cover",
+  shotImage: { width: "100%", height: "100%", resizeMode: "cover" },
+  uploadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15, 23, 42, 0.55)",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 4,
   },
+  failedOverlay: { backgroundColor: "rgba(220, 38, 38, 0.6)" },
+  overlayText: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
   imageOverlayTop: {
     position: "absolute",
     top: 6,
@@ -949,11 +1297,8 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 12,
   },
-  completedBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#15803D",
-  },
+  failedBadge: { backgroundColor: "rgba(254, 242, 242, 0.97)" },
+  completedBadgeText: { fontSize: 11, fontWeight: "700", color: "#15803D" },
   removeShotBadge: {
     width: 22,
     height: 22,
@@ -974,29 +1319,18 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 8,
   },
-  retakeButtonText: {
-    color: "#FFFFFF",
-    fontSize: 11,
-    fontWeight: "600",
-  },
+  retakeButtonLeft: { right: undefined, left: 6 },
+  retryButton: { backgroundColor: "#DC2626" },
+  retakeButtonText: { color: "#FFFFFF", fontSize: 11, fontWeight: "600" },
   damageBadge: {
     backgroundColor: "#FEE2E2",
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
   },
-  damageBadgeText: {
-    color: "#991B1B",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  horizontalScrollList: {
-    gap: 12,
-    paddingVertical: 6,
-  },
-  damageImageContainer: {
-    position: "relative",
-  },
+  damageBadgeText: { color: "#991B1B", fontSize: 12, fontWeight: "700" },
+  horizontalScrollList: { gap: 12, paddingVertical: 6 },
+  damageImageContainer: { position: "relative" },
   damageThumb: {
     width: 90,
     height: 90,
@@ -1012,11 +1346,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 6,
   },
-  damageIndexText: {
-    color: "#FFFFFF",
-    fontSize: 10,
-    fontWeight: "700",
-  },
+  damageIndexText: { color: "#FFFFFF", fontSize: 10, fontWeight: "700" },
   warningContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -1026,14 +1356,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginTop: 8,
   },
-  warningText: {
-    fontSize: 12,
-    color: "#991B1B",
-    flex: 1,
-  },
-  additionalImageWrap: {
-    position: "relative",
-  },
+  warningText: { fontSize: 12, color: "#991B1B", flex: 1 },
+  additionalImageWrap: { position: "relative" },
   additionalThumb: {
     width: 86,
     height: 86,
@@ -1065,11 +1389,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#EFF6FF",
     marginTop: 8,
   },
-  addMoreBtnText: {
-    color: "#2563EB",
-    fontWeight: "700",
-    fontSize: 13,
-  },
+  addMoreBtnText: { color: "#2563EB", fontWeight: "700", fontSize: 13 },
   bottomFooter: {
     position: "absolute",
     bottom: 0,
@@ -1087,6 +1407,13 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 10,
   },
+  footerHint: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#2563EB",
+    textAlign: "center",
+    marginBottom: 8,
+  },
   primarySubmitBtn: {
     height: 50,
     borderRadius: 12,
@@ -1094,17 +1421,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  disabledSubmitBtn: {
-    backgroundColor: "#94A3B8",
-  },
-  submitBtnContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  primarySubmitBtnText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "700",
-  },
+  disabledSubmitBtn: { backgroundColor: "#94A3B8" },
+  submitBtnContent: { flexDirection: "row", alignItems: "center", gap: 8 },
+  primarySubmitBtnText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
 });

@@ -10,6 +10,7 @@ import {
   Image,
   KeyboardAvoidingView,
   LayoutAnimation,
+  Linking, // FIX: was used for "Track Location" but never imported
   Modal,
   Platform,
   SafeAreaView,
@@ -95,7 +96,6 @@ export default function EditRentalScreen() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
-  // CHANGED: Sections are now open by default
   const [showBillSummary, setShowBillSummary] = useState(true);
   const [showRecapSummary, setShowRecapSummary] = useState(true);
 
@@ -130,12 +130,18 @@ export default function EditRentalScreen() {
   const [paymentType, setPaymentType] = useState("cash");
   const [phonePeLastFour, setPhonePeLastFour] = useState([""]);
 
+  // NEW: refund given back to the customer (when rental is shortened)
+  const [amountRefundedNow, setAmountRefundedNow] = useState("0");
+  const [refundMethod, setRefundMethod] = useState("cash");
+  const [amountRefundedPreviously, setAmountRefundedPreviously] = useState(0);
+
   const onExtensionPriceChange = makeAmountHandler(setExtensionPrice);
   const onFastagChange = makeAmountHandler(setFastagPayable);
   const onSecurityDepositChange = makeAmountHandler(setSecurityDeposit);
   const onExtraChargesChange = makeAmountHandler(setExtraCharges);
   const onDiscountChange = makeAmountHandler(setDiscountAmount);
   const onAmountReceivedNowChange = makeAmountHandler(setAmountReceivedNow);
+  const onAmountRefundedNowChange = makeAmountHandler(setAmountRefundedNow);
 
   const [pickupCharge, setPickupCharge] = useState(0);
   const [dropCharge, setDropCharge] = useState(0);
@@ -192,6 +198,12 @@ export default function EditRentalScreen() {
     [dropDateTime, originalDropDateTime],
   );
 
+  // NEW: direction of the change (compared by time, not day count)
+  const isShortened =
+    dropChanged &&
+    new Date(dropDateTime).getTime() < new Date(originalDropDateTime).getTime();
+  const isExtended = dropChanged && !isShortened;
+
   const isVehicleExchange =
     Boolean(originalVehicleId) &&
     Boolean(selectedVehicle?._id) &&
@@ -208,16 +220,21 @@ export default function EditRentalScreen() {
 
   const currentExtensionAmount = parseFloat(extensionPrice) || 0;
 
+  // CHANGED: extension adds, reduction subtracts
   const liveTotalFare = useMemo(() => {
-    const pendingExtension = dropChanged ? currentExtensionAmount : 0;
-    return previousBillTotal + pendingExtension;
-  }, [previousBillTotal, currentExtensionAmount, dropChanged]);
+    if (!dropChanged) return previousBillTotal;
+    if (isShortened) {
+      return Math.max(0, previousBillTotal - currentExtensionAmount);
+    }
+    return previousBillTotal + currentExtensionAmount;
+  }, [previousBillTotal, currentExtensionAmount, dropChanged, isShortened]);
 
   const fastag = parseFloat(fastagPayable) || 0;
   const deposit = parseFloat(securityDeposit) || 0;
   const extra = parseFloat(extraCharges) || 0;
   const discount = parseFloat(discountAmount) || 0;
   const currentReceived = parseFloat(amountReceivedNow) || 0;
+  const currentRefund = parseFloat(amountRefundedNow) || 0;
 
   const liveBillSummary = useMemo(() => {
     const totalAmount = Math.max(
@@ -234,8 +251,22 @@ export default function EditRentalScreen() {
     const amountReceivedNowCumulative =
       amountReceivedPreviously + currentReceived;
 
-    const totalCollected = bookingAmountPaid + amountReceivedNowCumulative;
+    // What the company holds BEFORE this refund
+    const netBeforeRefund =
+      bookingAmountPaid +
+      amountReceivedNowCumulative -
+      amountRefundedPreviously;
+
+    // Max that can be refunded right now
+    const refundable = Math.max(0, netBeforeRefund - totalAmount);
+
+    const refundedTotal = amountRefundedPreviously + currentRefund;
+
+    const totalCollected =
+      bookingAmountPaid + amountReceivedNowCumulative - refundedTotal;
+
     const balanceAmount = Math.max(0, totalAmount - totalCollected);
+    const refundDue = Math.max(0, totalCollected - totalAmount);
 
     return {
       totalFare: liveTotalFare,
@@ -248,8 +279,11 @@ export default function EditRentalScreen() {
       totalAmount,
       bookingAmountPaid,
       amountReceivedNow: amountReceivedNowCumulative,
+      refundedAmount: refundedTotal,
+      refundable,
       totalCollected,
       balanceAmount,
+      refundDue,
     };
   }, [
     liveTotalFare,
@@ -262,10 +296,17 @@ export default function EditRentalScreen() {
     bookingAmountPaid,
     amountReceivedPreviously,
     currentReceived,
+    amountRefundedPreviously,
+    currentRefund,
   ]);
 
   const grandTotal = liveBillSummary.totalAmount;
   const balanceAmount = liveBillSummary.balanceAmount;
+  const refundDue = liveBillSummary.refundDue;
+  const refundable = liveBillSummary.refundable;
+
+  // Show refund section when customer has overpaid or a refund is typed
+  const showRefundSection = refundable > 0 || currentRefund > 0;
 
   const fetchRentalDetails = async () => {
     try {
@@ -280,7 +321,11 @@ export default function EditRentalScreen() {
       const data = response.data.data;
       const serverBillSummary = data.billSummary || null;
 
-      setCustomerInfo({ name: data.customerName, phone: data.customerPhone, location: data.customerLocation });
+      setCustomerInfo({
+        name: data.customerName,
+        phone: data.customerPhone,
+        location: data.customerLocation,
+      });
       setBookingCode(data.bookingCode || "");
       setVehicleInfo({
         model: data.vehicleModel,
@@ -323,6 +368,13 @@ export default function EditRentalScreen() {
       setBookingAmountPaid(data.bookingAmountPaid || 0);
       setAmountReceivedPreviously(data.amountReceivedPreviously || 0);
 
+      // NEW: needs the GET endpoint to send this (see notes)
+      setAmountRefundedPreviously(
+        Number(
+          data.amountRefundedPreviously ?? serverBillSummary?.refundedAmount,
+        ) || 0,
+      );
+
       setPickupCharge(
         Number(serverBillSummary?.pickupCharge ?? data.pickupCharge) || 0,
       );
@@ -342,6 +394,8 @@ export default function EditRentalScreen() {
 
       setPaymentType("cash");
       setPhonePeLastFour([""]);
+      setAmountRefundedNow("0");
+      setRefundMethod("cash");
     } catch (error) {
       Alert.alert("Error", "Failed to load rental details.");
     } finally {
@@ -516,10 +570,32 @@ export default function EditRentalScreen() {
       return;
     }
 
-    if (dropChanged && currentExtensionAmount <= 0) {
+    // NEW: drop must stay after pickup
+    if (
+      dropChanged &&
+      new Date(dropDateTime).getTime() <= new Date(pickupDate).getTime()
+    ) {
+      Alert.alert(
+        "Invalid Drop Date",
+        "Drop date and time must be after the pickup date and time.",
+      );
+      return;
+    }
+
+    // CHANGED: only extensions require a charge
+    if (isExtended && currentExtensionAmount <= 0) {
       Alert.alert(
         "Extension Amount Required",
-        "You changed the drop date — please enter the extension charge for this new bill.",
+        "You extended the drop date — please enter the extension charge for this new bill.",
+      );
+      return;
+    }
+
+    // NEW: reduction cannot be more than the fare so far
+    if (isShortened && currentExtensionAmount > previousBillTotal) {
+      Alert.alert(
+        "Invalid Reduction",
+        `Fare reduction cannot be more than the current total fare (${formatMoney(previousBillTotal)}).`,
       );
       return;
     }
@@ -538,6 +614,15 @@ export default function EditRentalScreen() {
       }
     }
 
+    // NEW: refund cannot exceed the overpaid amount
+    if (currentRefund > 0 && currentRefund > refundable + 0.001) {
+      Alert.alert(
+        "Invalid Refund",
+        `You can refund at most ${formatMoney(refundable)}.`,
+      );
+      return;
+    }
+
     if (!validateExchangePhotos()) return;
 
     try {
@@ -547,9 +632,11 @@ export default function EditRentalScreen() {
 
       formData.append("vehicleId", selectedVehicle?._id?.toString() || "");
       formData.append("dropDateTime", istWallClockToUtcIso(dropDateTime));
+      // Positive number for both cases — the server decides +/− by
+      // comparing the new drop with the current one.
       formData.append(
         "extensionPrice",
-        String(dropChanged ? Number(extensionPrice) : 0),
+        String(dropChanged ? Number(extensionPrice) || 0 : 0),
       );
       formData.append("fastagCharges", String(Number(fastagPayable)));
       formData.append("securityDeposit", String(Number(securityDeposit)));
@@ -563,6 +650,9 @@ export default function EditRentalScreen() {
           ? JSON.stringify(phonePeLastFour.filter(Boolean))
           : "",
       );
+      // NEW
+      formData.append("amountRefundedNow", String(currentRefund));
+      formData.append("refundMethod", currentRefund > 0 ? refundMethod : "");
       formData.append("reasonForChange", reasonForChange);
 
       if (isVehicleExchange) {
@@ -585,25 +675,32 @@ export default function EditRentalScreen() {
         });
       }
 
-      await api.put(`/handover/rentals/edit/${cleanId}`, formData, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "multipart/form-data",
+      const response = await api.put(
+        `/handover/rentals/edit/${cleanId}`,
+        formData,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "multipart/form-data",
+          },
         },
-      });
+      );
 
       if (extensionId) {
         try {
-          // If we came here from the ExtensionRequests screen, mark it as approved
-          await api.put(`/extensions/${extensionId}/status`, { status: "approved" });
+          await api.put(`/extensions/${extensionId}/status`, {
+            status: "approved",
+          });
         } catch (extError) {
           console.warn("Could not mark extension as approved:", extError);
         }
       }
 
-      Alert.alert("Success", "Rental updated successfully", [
-        { text: "OK", onPress: () => router.replace("/(tabs)/home") },
-      ]);
+      Alert.alert(
+        "Success",
+        response?.data?.message || "Rental updated successfully",
+        [{ text: "OK", onPress: () => router.replace("/(tabs)/home") }],
+      );
     } catch (error) {
       Alert.alert(
         "Error",
@@ -696,18 +793,38 @@ export default function EditRentalScreen() {
                 <Text style={{ fontWeight: "700" }}>Customer </Text>
                 {customerInfo.name} • {customerInfo.phone}
               </Text>
-              {customerInfo.location?.coordinates && customerInfo.location.coordinates.length === 2 && (
-                <TouchableOpacity 
-                  onPress={() => {
-                    const [lng, lat] = customerInfo.location.coordinates;
-                    Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`);
-                  }}
-                  style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, padding: 8, backgroundColor: '#EFF6FF', borderRadius: 8, alignSelf: 'flex-start' }}
-                >
-                  <Ionicons name="location" size={16} color="#2563EB" />
-                  <Text style={{ color: '#2563EB', marginLeft: 6, fontWeight: '600', fontSize: 13 }}>Track Location</Text>
-                </TouchableOpacity>
-              )}
+              {customerInfo.location?.coordinates &&
+                customerInfo.location.coordinates.length === 2 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      const [lng, lat] = customerInfo.location.coordinates;
+                      Linking.openURL(
+                        `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
+                      );
+                    }}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      marginTop: 8,
+                      padding: 8,
+                      backgroundColor: "#EFF6FF",
+                      borderRadius: 8,
+                      alignSelf: "flex-start",
+                    }}
+                  >
+                    <Ionicons name="location" size={16} color="#2563EB" />
+                    <Text
+                      style={{
+                        color: "#2563EB",
+                        marginLeft: 6,
+                        fontWeight: "600",
+                        fontSize: 13,
+                      }}
+                    >
+                      Track Location
+                    </Text>
+                  </TouchableOpacity>
+                )}
               <View style={{ height: 12 }} />
               <Text style={styles.readOnlyText}>
                 <Text style={{ fontWeight: "700" }}>Vehicle </Text>
@@ -814,12 +931,26 @@ export default function EditRentalScreen() {
             </View>
 
             {dropChanged && (
-              <View style={styles.extensionNoticeBanner}>
-                <Ionicons name="alert-circle" size={16} color="#B45309" />
-                <Text style={styles.extensionNoticeText}>
-                  {extraDays >= 0
-                    ? `Extended by ${extraDays} day${extraDays === 1 ? "" : "s"} — a new extension bill will be added below.`
-                    : `Shortened by ${Math.abs(extraDays)} day${Math.abs(extraDays) === 1 ? "" : "s"} — this will be logged as a new bill entry.`}
+              <View
+                style={[
+                  styles.extensionNoticeBanner,
+                  isShortened && styles.reductionNoticeBanner,
+                ]}
+              >
+                <Ionicons
+                  name="alert-circle"
+                  size={16}
+                  color={isShortened ? "#B91C1C" : "#B45309"}
+                />
+                <Text
+                  style={[
+                    styles.extensionNoticeText,
+                    isShortened && styles.reductionNoticeText,
+                  ]}
+                >
+                  {isShortened
+                    ? `Shortened by ${Math.abs(extraDays)} day${Math.abs(extraDays) === 1 ? "" : "s"} — enter the fare reduction below.`
+                    : `Extended by ${extraDays} day${extraDays === 1 ? "" : "s"} — a new extension bill will be added below.`}
                 </Text>
               </View>
             )}
@@ -877,7 +1008,7 @@ export default function EditRentalScreen() {
                           color="#2563EB"
                         />
                         <Text style={styles.historyToggleText}>
-                          {billSummary.extensionBills.length} previous extension
+                          {billSummary.extensionBills.length} previous change
                           {billSummary.extensionBills.length === 1 ? "" : "s"}
                         </Text>
                         <Ionicons
@@ -888,48 +1019,64 @@ export default function EditRentalScreen() {
                       </TouchableOpacity>
 
                       {showHistory &&
-                        billSummary.extensionBills.map((bill) => (
-                          <View
-                            key={bill.billNumber}
-                            style={styles.pastBillCard}
-                          >
-                            <View style={styles.billRow}>
-                              <Text style={styles.billRowLabel}>
-                                Extension #{bill.billNumber}{" "}
-                                <Text style={styles.billRowSub}>
-                                  ({bill.extraDays >= 0 ? "+" : ""}
-                                  {bill.extraDays}d •{" "}
-                                  {formatDate(bill.previousDropDateTime)} →{" "}
-                                  {formatDate(bill.newDropDateTime)})
+                        billSummary.extensionBills.map((bill) => {
+                          const isReductionBill = bill.billType === "reduction";
+                          return (
+                            <View
+                              key={bill.billNumber}
+                              style={styles.pastBillCard}
+                            >
+                              <View style={styles.billRow}>
+                                <Text style={styles.billRowLabel}>
+                                  {isReductionBill ? "Reduction" : "Extension"}{" "}
+                                  #{bill.billNumber}{" "}
+                                  <Text style={styles.billRowSub}>
+                                    ({bill.extraDays >= 0 ? "+" : ""}
+                                    {bill.extraDays}d •{" "}
+                                    {formatDate(bill.previousDropDateTime)} →{" "}
+                                    {formatDate(bill.newDropDateTime)})
+                                  </Text>
                                 </Text>
-                              </Text>
-                              <Text style={styles.billRowValue}>
-                                {formatMoney(bill.extensionAmount)}
-                              </Text>
+                                <Text
+                                  style={[
+                                    styles.billRowValue,
+                                    isReductionBill && styles.reductionValue,
+                                  ]}
+                                >
+                                  {isReductionBill ? "− " : ""}
+                                  {formatMoney(bill.extensionAmount)}
+                                </Text>
+                              </View>
+                              <View style={styles.pastBillMetaRow}>
+                                <Text style={styles.pastBillMetaText}>
+                                  Collected then:{" "}
+                                  {formatMoney(bill.amountCollected)}
+                                </Text>
+                                <Text style={styles.pastBillMetaText}>
+                                  Running total:{" "}
+                                  {formatMoney(bill.totalFareAfterThisBill)}
+                                </Text>
+                              </View>
+                              {Number(bill.amountRefunded) > 0 && (
+                                <Text style={styles.pastBillMetaText}>
+                                  Refunded then:{" "}
+                                  {formatMoney(bill.amountRefunded)}
+                                </Text>
+                              )}
+                              {!!bill.reason && (
+                                <Text style={styles.pastBillReason}>
+                                  "{bill.reason}"
+                                </Text>
+                              )}
+                              {!!bill.createdAt && (
+                                <Text style={styles.pastBillDate}>
+                                  {formatDate(bill.createdAt)} at{" "}
+                                  {formatTime(bill.createdAt)}
+                                </Text>
+                              )}
                             </View>
-                            <View style={styles.pastBillMetaRow}>
-                              <Text style={styles.pastBillMetaText}>
-                                Collected then:{" "}
-                                {formatMoney(bill.amountCollected)}
-                              </Text>
-                              <Text style={styles.pastBillMetaText}>
-                                Running total:{" "}
-                                {formatMoney(bill.totalFareAfterThisBill)}
-                              </Text>
-                            </View>
-                            {!!bill.reason && (
-                              <Text style={styles.pastBillReason}>
-                                "{bill.reason}"
-                              </Text>
-                            )}
-                            {!!bill.createdAt && (
-                              <Text style={styles.pastBillDate}>
-                                {formatDate(bill.createdAt)} at{" "}
-                                {formatTime(bill.createdAt)}
-                              </Text>
-                            )}
-                          </View>
-                        ))}
+                          );
+                        })}
 
                       <View
                         style={[styles.billRow, styles.previousBillTotalRow]}
@@ -945,18 +1092,45 @@ export default function EditRentalScreen() {
                   )}
 
                   {dropChanged && (
-                    <View style={[styles.billRow, styles.pendingBillRow]}>
-                      <Text style={[styles.billRowLabel, styles.pendingLabel]}>
-                        New Extension{" "}
+                    <View
+                      style={[
+                        styles.billRow,
+                        styles.pendingBillRow,
+                        isShortened && styles.pendingReductionRow,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.billRowLabel,
+                          styles.pendingLabel,
+                          isShortened && styles.pendingReductionLabel,
+                        ]}
+                      >
+                        {isShortened ? "Fare Reduction" : "New Extension"}{" "}
                         <Text style={styles.billRowSub}>
                           ({extraDays >= 0 ? "+" : ""}
                           {extraDays}d → {formatDate(dropDateTime)})
                         </Text>
                       </Text>
-                      <View style={styles.pendingAmountInput}>
-                        <Text style={styles.pendingCurrency}>₹</Text>
+                      <View
+                        style={[
+                          styles.pendingAmountInput,
+                          isShortened && styles.pendingReductionInput,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.pendingCurrency,
+                            isShortened && styles.pendingReductionLabel,
+                          ]}
+                        >
+                          {isShortened ? "−₹" : "₹"}
+                        </Text>
                         <TextInput
-                          style={styles.pendingAmountText}
+                          style={[
+                            styles.pendingAmountText,
+                            isShortened && styles.pendingReductionLabel,
+                          ]}
                           keyboardType="numeric"
                           placeholder="0"
                           value={extensionPrice}
@@ -1116,16 +1290,31 @@ export default function EditRentalScreen() {
                       label="Amount Received (Total)"
                       value={liveBillSummary.amountReceivedNow}
                     />
+                    {liveBillSummary.refundedAmount > 0 && (
+                      <RecapRow
+                        label="Refunded (Total)"
+                        value={liveBillSummary.refundedAmount}
+                        negative
+                      />
+                    )}
                     <RecapRow
                       label="Total Collected"
                       value={liveBillSummary.totalCollected}
                     />
                     <View style={styles.recapDivider} />
-                    <RecapRow
-                      label="Balance Amount"
-                      value={liveBillSummary.balanceAmount}
-                      emphasize
-                    />
+                    {refundDue > 0 ? (
+                      <RecapRow
+                        label="Refund Due to Customer"
+                        value={refundDue}
+                        emphasize
+                      />
+                    ) : (
+                      <RecapRow
+                        label="Balance Amount"
+                        value={liveBillSummary.balanceAmount}
+                        emphasize
+                      />
+                    )}
                   </>
                 ))}
             </View>
@@ -1297,19 +1486,99 @@ export default function EditRentalScreen() {
               </>
             )}
 
+            {/* ---------- NEW: REFUND SECTION ---------- */}
+            {showRefundSection && (
+              <View style={styles.refundSection}>
+                <View style={styles.refundHeaderRow}>
+                  <Ionicons
+                    name="return-down-back-outline"
+                    size={18}
+                    color="#B91C1C"
+                  />
+                  <Text style={styles.refundTitle}>Refund to Customer</Text>
+                </View>
+                <Text style={styles.refundHint}>
+                  Customer has paid {formatMoney(refundable)} more than the new
+                  total. Enter the amount you are returning now.
+                </Text>
+
+                <View style={[styles.inputField, styles.refundInput]}>
+                  <Text style={styles.refundCurrency}>₹</Text>
+                  <TextInput
+                    style={styles.textInputBox}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    value={amountRefundedNow}
+                    onChangeText={onAmountRefundedNowChange}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setAmountRefundedNow(String(refundable))}
+                    style={styles.refundFullBtn}
+                  >
+                    <Text style={styles.refundFullText}>Full</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {currentRefund > 0 && (
+                  <>
+                    <Text style={styles.fieldLabel}>Refund Mode</Text>
+                    <View style={styles.paymentTypeRow}>
+                      {[
+                        { key: "cash", label: "Cash", icon: "cash-outline" },
+                        {
+                          key: "phonepe",
+                          label: "PhonePe",
+                          icon: "phone-portrait-outline",
+                        },
+                      ].map((opt) => (
+                        <TouchableOpacity
+                          key={opt.key}
+                          style={[
+                            styles.paymentTypeBtn,
+                            refundMethod === opt.key &&
+                              styles.paymentTypeBtnActive,
+                          ]}
+                          onPress={() => setRefundMethod(opt.key)}
+                        >
+                          <Ionicons
+                            name={opt.icon}
+                            size={18}
+                            color={
+                              refundMethod === opt.key ? "#111827" : "#64748B"
+                            }
+                          />
+                          <Text
+                            style={[
+                              styles.paymentTypeText,
+                              refundMethod === opt.key &&
+                                styles.paymentTypeTextActive,
+                            ]}
+                          >
+                            {opt.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                )}
+              </View>
+            )}
+
             <View
               style={[
                 styles.calculationBanner,
-                balanceAmount > 0 ? styles.alertBanner : styles.settledBanner,
+                refundDue > 0
+                  ? styles.creditBanner
+                  : balanceAmount > 0
+                    ? styles.alertBanner
+                    : styles.settledBanner,
               ]}
             >
               <Text style={styles.bannerLabel}>
-                {balanceAmount >= 0
-                  ? "Remaining Balance"
-                  : "Credit Due to Customer"}
+                {refundDue > 0 ? "Credit Due to Customer" : "Remaining Balance"}
               </Text>
               <Text style={styles.bannerValue}>
-                {formatMoney(Math.abs(balanceAmount))}
+                {formatMoney(refundDue > 0 ? refundDue : balanceAmount)}
               </Text>
             </View>
 
@@ -1355,8 +1624,9 @@ export default function EditRentalScreen() {
           value={dropDateTime}
           mode="date"
           display="default"
+          minimumDate={pickupDate}
           onValueChange={onDateChange}
-          onDismiss={() => onDateChange({type: "dismissed"})}
+          onDismiss={() => onDateChange({ type: "dismissed" })}
         />
       )}
 
@@ -1367,7 +1637,7 @@ export default function EditRentalScreen() {
           is24Hour={false}
           display="default"
           onValueChange={onTimeChange}
-          onDismiss={() => onTimeChange({type: "dismissed"})}
+          onDismiss={() => onTimeChange({ type: "dismissed" })}
         />
       )}
 
@@ -1400,6 +1670,7 @@ export default function EditRentalScreen() {
               vehicleRear: null,
               vehicleLeft: null,
               vehicleRight: null,
+              additional: null,
             });
           }
         }}
@@ -1413,7 +1684,6 @@ export default function EditRentalScreen() {
 ============================================================ */
 
 function SectionHeader({ title, collapsible, isOpen, onToggle }) {
-  // We extract the UI row to easily wrap it in a TouchableOpacity if collapsible
   const headerContent = (
     <View style={styles.sectionHeaderRow}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -1633,7 +1903,7 @@ const styles = StyleSheet.create({
   readOnlyText: { fontSize: 14, color: "#1E3A8A", marginBottom: 4 },
 
   sectionHeader: { marginTop: 24, marginBottom: 12 },
-  sectionHeaderClickable: { paddingVertical: 4 }, // Make the click area larger
+  sectionHeaderClickable: { paddingVertical: 4 },
   sectionHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1648,7 +1918,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
-  // Toggle circular styling for collapsible headers
   iconCircle: {
     width: 32,
     height: 32,
@@ -1713,6 +1982,11 @@ const styles = StyleSheet.create({
     color: "#92400E",
     fontWeight: "600",
   },
+  reductionNoticeBanner: {
+    backgroundColor: "#FEF2F2",
+    borderColor: "#FECACA",
+  },
+  reductionNoticeText: { color: "#991B1B" },
 
   /* ---------- VEHICLE EXCHANGE PHOTOS ---------- */
   exchangePhotoSection: {
@@ -1846,6 +2120,7 @@ const styles = StyleSheet.create({
   },
   billRowSub: { fontSize: 12, color: "#94A3B8", fontWeight: "500" },
   billRowValue: { fontSize: 14, color: "#0F172A", fontWeight: "700" },
+  reductionValue: { color: "#DC2626" },
 
   historyToggle: {
     flexDirection: "row",
@@ -1908,6 +2183,8 @@ const styles = StyleSheet.create({
     marginVertical: 2,
   },
   pendingLabel: { color: "#1D4ED8" },
+  pendingReductionRow: { backgroundColor: "#FEF2F2" },
+  pendingReductionLabel: { color: "#B91C1C" },
   pendingAmountInput: {
     flexDirection: "row",
     alignItems: "center",
@@ -1919,6 +2196,7 @@ const styles = StyleSheet.create({
     height: 34,
     minWidth: 90,
   },
+  pendingReductionInput: { borderColor: "#FCA5A5" },
   pendingCurrency: {
     fontSize: 13,
     color: "#1D4ED8",
@@ -1979,7 +2257,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 8,
-    paddingVertical: 4, // Better touch area
+    paddingVertical: 4,
   },
   recapTitle: {
     fontSize: 12,
@@ -2102,6 +2380,39 @@ const styles = StyleSheet.create({
   },
   phonePeAddText: { fontSize: 13.5, fontWeight: "700", color: "#2563EB" },
 
+  /* ---------- Refund section (NEW) ---------- */
+  refundSection: {
+    marginTop: 16,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: "#FEF2F2",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+  },
+  refundHeaderRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  refundTitle: { fontSize: 15, fontWeight: "800", color: "#991B1B" },
+  refundHint: {
+    fontSize: 12,
+    color: "#7F1D1D",
+    marginTop: 4,
+    marginBottom: 10,
+    lineHeight: 16,
+  },
+  refundInput: { borderColor: "#FCA5A5", borderWidth: 1.5 },
+  refundCurrency: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#B91C1C",
+    marginRight: 4,
+  },
+  refundFullBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#FEE2E2",
+  },
+  refundFullText: { fontSize: 12, fontWeight: "800", color: "#B91C1C" },
+
   calculationBanner: {
     backgroundColor: "#F8FAFC",
     borderColor: "#E2E8F0",
@@ -2115,6 +2426,7 @@ const styles = StyleSheet.create({
   },
   alertBanner: { backgroundColor: "#FFFBEB", borderColor: "#FDE68A" },
   settledBanner: { backgroundColor: "#F0FDF4", borderColor: "#BBF7D0" },
+  creditBanner: { backgroundColor: "#FEF2F2", borderColor: "#FECACA" },
   bannerLabel: { fontSize: 13, fontWeight: "700", color: "#334155" },
   bannerValue: { fontSize: 16, fontWeight: "800", color: "#0F172A" },
 

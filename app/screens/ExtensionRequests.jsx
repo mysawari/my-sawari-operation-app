@@ -6,8 +6,10 @@ import {
   Alert,
   FlatList,
   Image,
+  KeyboardAvoidingView,
   Linking,
   Modal,
+  Platform,
   Pressable,
   StatusBar,
   StyleSheet,
@@ -18,21 +20,23 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import api from "../../services/api";
 
+/* ---------- Theme ---------- */
 const C = {
-  bg: "#F8FAFC",
+  bg: "#F4F6FA",
   card: "#FFFFFF",
   text: "#0F172A",
   sub: "#64748B",
   muted: "#94A3B8",
-  border: "#E2E8F0",
-  accent: "#DB2777",
-  accentBg: "#FDF2F8",
+  border: "#E5E9F0",
+  soft: "#F8FAFC",
+  primary: "#0F2554",
+  primarySoft: "#EEF2FF",
   green: "#16A34A",
-  greenBg: "#F0FDF4",
+  greenSoft: "#ECFDF3",
   red: "#DC2626",
-  redBg: "#FEF2F2",
-  amber: "#D97706",
-  amberBg: "#FFFBEB",
+  redSoft: "#FEF2F2",
+  amber: "#B45309",
+  amberSoft: "#FFF7E6",
 };
 
 const FILTERS = [
@@ -42,10 +46,13 @@ const FILTERS = [
 ];
 
 const STATUS_STYLE = {
-  pending: { label: "Awaiting reply", color: C.amber, bg: C.amberBg },
-  approved: { label: "Approved", color: C.green, bg: C.greenBg },
-  rejected: { label: "Rejected", color: C.red, bg: C.redBg },
+  pending: { label: "Pending", color: C.amber, bg: C.amberSoft },
+  approved: { label: "Approved", color: C.green, bg: C.greenSoft },
+  rejected: { label: "Rejected", color: C.red, bg: C.redSoft },
 };
+
+/* ---------- Helpers ---------- */
+const DAY_MS = 1000 * 60 * 60 * 24;
 
 const formatINR = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
 
@@ -69,7 +76,6 @@ const fmtDate = (d) =>
     ? d.toLocaleDateString("en-IN", {
         day: "2-digit",
         month: "short",
-        year: "numeric",
         timeZone: "Asia/Kolkata",
       })
     : "N/A";
@@ -83,144 +89,143 @@ const fmtTime = (d) =>
       })
     : "";
 
-const DAY_MS = 1000 * 60 * 60 * 24;
+const timeAgo = (v) => {
+  const d = toDateObj(v);
+  if (!d) return "";
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return fmtDate(d);
+};
 
 /* ---------- Card ---------- */
-function RequestCard({ item, onAccept, onDecline }) {
+function RequestCard({ item, onApprove, onDecline, busy }) {
   const status = STATUS_STYLE[item.status] || STATUS_STYLE.pending;
   const isPending = item.status === "pending";
   const shortened = item.extraDays < 0;
   const absDays = Math.abs(item.extraDays);
+  const hasPhone =
+    !!item.customer.phone && item.customer.phone !== "Unknown Mobile";
 
   return (
     <View style={styles.card}>
-      {/* Top row */}
-      <View style={styles.cardTop}>
+      {/* Row 1: vehicle + status */}
+      <View style={styles.rowTop}>
+        {item.vehicle.image ? (
+          <Image source={{ uri: item.vehicle.image }} style={styles.thumb} />
+        ) : (
+          <View style={[styles.thumb, styles.thumbEmpty]}>
+            <MaterialCommunityIcons name="car-side" size={20} color={C.muted} />
+          </View>
+        )}
+
         <View style={{ flex: 1 }}>
-          <Text style={styles.reqId}>
-            {item.bookingCode || `#${String(item.id).slice(-6).toUpperCase()}`}
+          <Text style={styles.vehicleName} numberOfLines={1}>
+            {item.vehicle.name}
           </Text>
-          <Text style={styles.reqTime}>Requested {item.requestedAt}</Text>
+          <View style={styles.metaRow}>
+            {!!item.vehicle.plate && (
+              <Text style={styles.plate}>{item.vehicle.plate}</Text>
+            )}
+            <Text style={styles.metaText} numberOfLines={1}>
+              {item.bookingCode ||
+                `#${String(item.id).slice(-6).toUpperCase()}`}
+              {"  ·  "}
+              {item.requestedAgo}
+            </Text>
+          </View>
         </View>
-        <View style={[styles.statusPill, { backgroundColor: status.bg }]}>
-          <View style={[styles.statusDot, { backgroundColor: status.color }]} />
-          <Text style={[styles.statusText, { color: status.color }]}>
+
+        <View style={[styles.badge, { backgroundColor: status.bg }]}>
+          <Text style={[styles.badgeText, { color: status.color }]}>
             {status.label}
           </Text>
         </View>
       </View>
 
-      {/* Vehicle */}
-      <View style={styles.vehicleRow}>
-        {item.vehicle.image ? (
-          <Image source={{ uri: item.vehicle.image }} style={styles.carImg} />
-        ) : (
-          <View style={[styles.carImg, styles.carPlaceholder]}>
-            <MaterialCommunityIcons name="car" size={28} color={C.muted} />
-          </View>
-        )}
+      {/* Row 2: dates */}
+      <View style={styles.dateStrip}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.carName} numberOfLines={1}>
-            {item.vehicle.name}
-          </Text>
-          {!!(item.vehicle.type || item.vehicle.color) && (
-            <Text style={styles.carType}>
-              {[item.vehicle.type, item.vehicle.color]
-                .filter(Boolean)
-                .join(" • ")}
-            </Text>
-          )}
-          {!!item.vehicle.plate && (
-            <View style={styles.plate}>
-              <Text style={styles.plateText}>{item.vehicle.plate}</Text>
-            </View>
-          )}
-        </View>
-      </View>
-
-      {/* Date range */}
-      <View style={styles.dateBox}>
-        <View style={styles.dateCol}>
           <Text style={styles.dateLabel}>Current return</Text>
-          <Text style={[styles.dateValue, styles.dateOld]}>
+          <Text style={styles.dateOld}>
             {item.fromDate}
+            {item.fromTime ? `, ${item.fromTime}` : ""}
           </Text>
-          <Text style={styles.dateTime}>{item.fromTime}</Text>
         </View>
 
-        <View style={styles.dateMiddle}>
-          <View
-            style={[styles.extraPill, shortened && { backgroundColor: C.red }]}
-          >
-            <Text style={styles.extraText}>
-              {shortened ? "−" : "+"}
-              {absDays} {absDays === 1 ? "day" : "days"}
-            </Text>
-          </View>
-          <View style={styles.arrowLine}>
-            <View style={styles.line} />
-            <Ionicons name="chevron-forward" size={14} color={C.accent} />
-          </View>
+        <View
+          style={[styles.daysChip, shortened && { backgroundColor: C.redSoft }]}
+        >
+          <Ionicons
+            name={shortened ? "remove" : "add"}
+            size={11}
+            color={shortened ? C.red : C.primary}
+          />
+          <Text style={[styles.daysText, shortened && { color: C.red }]}>
+            {absDays}d
+          </Text>
         </View>
 
-        <View style={[styles.dateCol, { alignItems: "flex-end" }]}>
+        <View style={{ flex: 1, alignItems: "flex-end" }}>
           <Text style={styles.dateLabel}>New return</Text>
-          <Text style={[styles.dateValue, { color: C.accent }]}>
+          <Text style={styles.dateNew}>
             {item.toDate}
+            {item.toTime ? `, ${item.toTime}` : ""}
           </Text>
-          <Text style={styles.dateTime}>{item.toTime}</Text>
         </View>
       </View>
 
-      {!!item.vehicle.pricePerDay && (
-        <View style={styles.chargeRow}>
-          <Text style={styles.chargeLabel}>Daily rate</Text>
-          <Text style={styles.chargeValue}>
-            {formatINR(item.vehicle.pricePerDay)}/day
-          </Text>
-        </View>
-      )}
-
-      <View style={styles.divider} />
-
-      {/* Customer */}
+      {/* Row 3: customer */}
       <View style={styles.customerRow}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{initials(item.customer.name)}</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.custName}>{item.customer.name}</Text>
-          <Text style={styles.custSub}>{item.customer.phone}</Text>
+          <Text style={styles.custName} numberOfLines={1}>
+            {item.customer.name}
+          </Text>
+          <Text style={styles.custPhone}>{item.customer.phone}</Text>
         </View>
-        {!!item.customer.phone && item.customer.phone !== "Unknown Mobile" && (
+        {!!item.vehicle.pricePerDay && (
+          <Text style={styles.rate}>
+            {formatINR(item.vehicle.pricePerDay)}/day
+          </Text>
+        )}
+        {hasPhone && (
           <Pressable
-            style={styles.callBtn}
+            style={styles.iconBtn}
             onPress={() => Linking.openURL(`tel:${item.customer.phone}`)}
             hitSlop={8}
             accessibilityLabel={`Call ${item.customer.name}`}
           >
-            <Feather name="phone" size={16} color={C.green} />
+            <Feather name="phone" size={14} color={C.green} />
           </Pressable>
         )}
       </View>
 
       {/* Reason */}
-      <View style={styles.reasonBox}>
-        <View style={styles.reasonHead}>
-          <Feather name="message-square" size={13} color={C.sub} />
-          <Text style={styles.reasonLabel}>Reason</Text>
-        </View>
-        <Text style={styles.reasonText}>{item.reason}</Text>
-      </View>
+      {!!item.reason && (
+        <Text style={styles.reason} numberOfLines={2}>
+          <Text style={styles.reasonLabel}>Reason: </Text>
+          {item.reason}
+        </Text>
+      )}
 
+      {/* Processed info */}
       {!isPending && (
-        <View style={styles.processedRow}>
-          <Feather name="user-check" size={12} color={C.muted} />
-          <Text style={styles.processedText}>
-            {item.status === "approved" ? "Approved by" : "Rejected by"}{" "}
-            <Text style={{ fontWeight: "600" }}>{item.processedBy}</Text>
+        <Text style={styles.processed} numberOfLines={2}>
+          {item.status === "approved" ? "Approved" : "Rejected"} by{" "}
+          <Text style={{ fontWeight: "600", color: C.text }}>
+            {item.processedBy}
           </Text>
-        </View>
+          {item.status === "rejected" && !!item.rejectReason
+            ? `  ·  ${item.rejectReason}`
+            : ""}
+        </Text>
       )}
 
       {/* Actions */}
@@ -228,25 +233,30 @@ function RequestCard({ item, onAccept, onDecline }) {
         <View style={styles.actions}>
           <Pressable
             onPress={() => onDecline(item)}
+            disabled={busy}
             style={({ pressed }) => [
               styles.btn,
-              styles.btnDecline,
-              pressed && { opacity: 0.7 },
+              styles.btnOutline,
+              (pressed || busy) && { opacity: 0.6 },
             ]}
           >
-            <Ionicons name="close" size={18} color={C.red} />
             <Text style={[styles.btnText, { color: C.red }]}>Decline</Text>
           </Pressable>
+
           <Pressable
-            onPress={() => onAccept(item)}
+            onPress={() => onApprove(item)}
+            disabled={busy}
             style={({ pressed }) => [
               styles.btn,
-              styles.btnAccept,
-              pressed && { opacity: 0.85 },
+              styles.btnSolid,
+              (pressed || busy) && { opacity: 0.8 },
             ]}
           >
-            <Ionicons name="checkmark" size={18} color="#fff" />
-            <Text style={[styles.btnText, { color: "#fff" }]}>Accept</Text>
+            {busy ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={[styles.btnText, { color: "#fff" }]}>Approve</Text>
+            )}
           </Pressable>
         </View>
       )}
@@ -260,90 +270,71 @@ export default function ExtensionRequests() {
   const [requests, setRequests] = useState([]);
   const [filter, setFilter] = useState("pending");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [processingId, setProcessingId] = useState(null);
 
-  const [rejectModalVisible, setRejectModalVisible] = useState(false);
   const [rejectItem, setRejectItem] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
 
-  const fetchExtensions = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get("/extensions");
-      if (!response.data?.success) return;
+  const mapRequest = (r) => {
+    const booking = r.bookingId || {};
+    const customer = r.customerId || {};
+    const handover = r.handover || {};
+    const v = r.vehicle || {};
 
-      const mapped = response.data.data.map((r) => {
-        const booking = r.bookingId || {};
-        const customer = r.customerId || {};
-        const handover = r.handover || {};
-        const v = r.vehicle || {};
+    const currentDrop = toDateObj(r.trip?.dropDateTime || booking.toDate);
+    const requestedDrop = toDateObj(r.requestedDropDate);
 
-        const customerName =
+    return {
+      id: r._id,
+      bookingCode: booking.bookingCode || "",
+      vehicle: {
+        name: v.vehicleName || booking.vehicleName || "Unknown Vehicle",
+        plate: v.vehicleNumber || booking.vehicleNumber || "",
+        image: v.image || "",
+        pricePerDay: v.pricePerDay || null,
+      },
+      customer: {
+        name:
           customer.customerName ||
           customer.name ||
           handover.customer?.fullName ||
           booking.customerName ||
-          "Unknown Customer";
-        const customerPhone =
+          "Unknown Customer",
+        phone:
           customer.mobileNumber ||
           handover.customer?.mobileNumber ||
           booking.customerPhone ||
-          "Unknown Mobile";
+          "Unknown Mobile",
+      },
+      fromDate: fmtDate(currentDrop),
+      fromTime: booking.dropTime || fmtTime(currentDrop),
+      toDate: fmtDate(requestedDrop),
+      toTime: r.requestedDropTime || fmtTime(requestedDrop),
+      extraDays:
+        currentDrop && requestedDrop
+          ? Math.round((requestedDrop - currentDrop) / DAY_MS)
+          : 0,
+      status: r.status,
+      reason: r.reason || "",
+      rejectReason: r.rejectReason || "",
+      processedBy: r.processedBy?.name || "Unknown",
+      requestedAgo: timeAgo(r.createdAt),
+    };
+  };
 
-        // Current drop (handover is the source of truth)
-        const currentDrop = toDateObj(r.trip?.dropDateTime || booking.toDate);
-        const requestedDrop = toDateObj(r.requestedDropDate);
-
-        const extraDays =
-          currentDrop && requestedDrop
-            ? Math.round((requestedDrop - currentDrop) / DAY_MS)
-            : 0;
-
-        return {
-          id: r._id,
-          bookingId: booking._id || null,
-          bookingCode: booking.bookingCode || "",
-
-          // IMPORTANT: edit-rental needs the HANDOVER id
-          rentalId: r.handoverId || null,
-          handoverStatus: r.handoverStatus,
-
-          vehicle: {
-            id: v._id || null,
-            name: v.vehicleName || booking.vehicleName || "Unknown Vehicle",
-            plate: v.vehicleNumber || booking.vehicleNumber || "",
-            color: v.color || "",
-            type: v.vehicleType || "",
-            image: v.image || "",
-            pricePerDay: v.pricePerDay || null,
-          },
-
-          customer: { name: customerName, phone: customerPhone },
-
-          pickupDateTime: r.trip?.pickupDateTime || null,
-
-          fromDate: fmtDate(currentDrop),
-          fromTime: booking.dropTime || fmtTime(currentDrop) || "N/A",
-          toDate: fmtDate(requestedDrop),
-          toTime: r.requestedDropTime || fmtTime(requestedDrop) || "N/A",
-          rawToDate: r.requestedDropDate || null,
-          extraDays,
-
-          status: r.status,
-          reason: r.reason || "No reason provided",
-          processedBy: r.processedBy?.name || "Unknown",
-          requestedAt: r.createdAt
-            ? `${fmtDate(toDateObj(r.createdAt))}, ${fmtTime(toDateObj(r.createdAt))}`
-            : "",
-          createdAt: r.createdAt,
-        };
-      });
-
-      // API already sorts newest first
-      setRequests(mapped);
+  const fetchExtensions = async (isPull = false) => {
+    try {
+      isPull ? setRefreshing(true) : setLoading(true);
+      const response = await api.get("/extensions");
+      if (response.data?.success && Array.isArray(response.data.data)) {
+        setRequests(response.data.data.map(mapRequest));
+      }
     } catch (err) {
       console.log("Error fetching extensions:", err?.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -362,128 +353,125 @@ export default function ExtensionRequests() {
     [requests],
   );
 
-  const visible = requests.filter((r) => r.status === filter);
+  const visible = useMemo(
+    () => requests.filter((r) => r.status === filter),
+    [requests, filter],
+  );
 
-  // ----------------------------------------------------------
-  // Navigate to edit-rental with handover id + vehicle data.
-  // Uses an params object — RN's URLSearchParams has no .append().
-  // Every value must be a string for expo-router.
-  // ----------------------------------------------------------
-  const openEditRental = (item) => {
-    if (!item.rentalId) {
+  const markProcessed = (id, patch) =>
+    setRequests((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+    );
+
+  /* ---------- Approve ---------- */
+  const approveRequest = async (item) => {
+    try {
+      setProcessingId(item.id);
+      const res = await api.put(`/extensions/${item.id}/status`, {
+        status: "approved",
+      });
+      markProcessed(item.id, {
+        status: "approved",
+        processedBy: res?.data?.data?.processedBy?.name || "You",
+      });
+      Alert.alert("Approved", "The extension request has been approved.");
+    } catch (err) {
       Alert.alert(
-        "Rental not found",
-        "This request isn't linked to an active rental, so it can't be extended here.",
+        "Error",
+        err?.response?.data?.message || "Could not approve the request.",
       );
-      return;
+      // If it was already processed elsewhere, refresh the list
+      if (err?.response?.status === 409) fetchExtensions(true);
+    } finally {
+      setProcessingId(null);
     }
-
-    if (item.handoverStatus && item.handoverStatus !== "active") {
-      Alert.alert(
-        "Rental not active",
-        "This rental has already been returned or cancelled.",
-      );
-      return;
-    }
-
-    const params = {
-      rentalId: String(item.rentalId),
-      extensionId: String(item.id),
-
-      // Vehicle
-      vehicleId: item.vehicle.id ? String(item.vehicle.id) : "",
-      vehicleModel: item.vehicle.name || "",
-      plateNumber: item.vehicle.plate || "",
-      vehicleColor: item.vehicle.color || "",
-
-      // Customer
-      customerName: item.customer.name || "",
-      customerPhone: item.customer.phone || "",
-    };
-
-    if (item.pickupDateTime) {
-      params.pickupDateTime = new Date(item.pickupDateTime).toISOString();
-    }
-    if (item.rawToDate) {
-      params.newDropDate = new Date(item.rawToDate).toISOString();
-    }
-
-    router.push({
-      pathname: "/components/activeRental/edit-rental",
-      params,
-    });
   };
 
-  const handleAccept = (item) => {
-    const verb = item.extraDays < 0 ? "shortened" : "extended";
+  const handleApprove = (item) => {
     Alert.alert(
-      "Accept request?",
-      `${item.customer.name}'s rental of ${item.vehicle.name}${
-        item.vehicle.plate ? ` (${item.vehicle.plate})` : ""
-      } will be ${verb} to ${item.toDate}, ${item.toTime}.\n\nCharges will be set on the next screen.`,
+      "Are you sure?",
+      "Do you want to approve this extension request?",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Proceed to Edit", onPress: () => openEditRental(item) },
+        { text: "Approve", onPress: () => approveRequest(item) },
       ],
     );
   };
 
+  /* ---------- Decline ---------- */
   const handleDecline = (item) => {
-    setRejectItem(item);
     setRejectReason("");
-    setRejectModalVisible(true);
+    setRejectItem(item);
+  };
+
+  const closeRejectModal = () => {
+    if (rejecting) return;
+    setRejectItem(null);
+    setRejectReason("");
   };
 
   const confirmDecline = async () => {
-    if (!rejectItem) return;
+    const item = rejectItem;
+    const reason = rejectReason.trim();
+    if (!item || !reason) return;
+
     try {
-      const res = await api.put(`/extensions/${rejectItem.id}/status`, {
+      setProcessingId(item.id);
+      const res = await api.put(`/extensions/${item.id}/status`, {
         status: "rejected",
-        rejectReason,
+        rejectReason: reason,
       });
-      const processedBy = res.data?.data?.processedBy?.name || "Unknown";
-      setRequests((prev) =>
-        prev.map((r) =>
-          r.id === rejectItem.id
-            ? { ...r, status: "rejected", processedBy }
-            : r,
-        ),
-      );
-      setRejectModalVisible(false);
+      markProcessed(item.id, {
+        status: "rejected",
+        rejectReason: reason,
+        processedBy: res?.data?.data?.processedBy?.name || "You",
+      });
       setRejectItem(null);
+      setRejectReason("");
+      Alert.alert("Declined", "The extension request has been declined.");
     } catch (err) {
-      console.log("Error declining:", err?.message);
-      Alert.alert("Error", "Could not update status.");
+      Alert.alert(
+        "Error",
+        err?.response?.data?.message || "Could not decline the request.",
+      );
+      if (err?.response?.status === 409) {
+        setRejectItem(null);
+        fetchExtensions(true);
+      }
+    } finally {
+      setProcessingId(null);
     }
   };
 
+  const rejecting = !!rejectItem && processingId === rejectItem.id;
+
+  /* ---------- Empty ---------- */
   const EmptyState = () =>
     loading ? (
       <View style={styles.empty}>
-        <ActivityIndicator size="large" color={C.accent} />
+        <ActivityIndicator size="large" color={C.primary} />
       </View>
     ) : (
       <View style={styles.empty}>
         <View style={styles.emptyIcon}>
           <MaterialCommunityIcons
-            name="calendar-check"
-            size={34}
-            color={C.accent}
+            name="calendar-check-outline"
+            size={28}
+            color={C.primary}
           />
         </View>
         <Text style={styles.emptyTitle}>
-          {filter === "pending"
-            ? "No requests waiting"
-            : `No ${filter} requests`}
+          {filter === "pending" ? "All caught up" : `No ${filter} requests`}
         </Text>
         <Text style={styles.emptySub}>
           {filter === "pending"
-            ? "When a customer asks to change their return date, it will show up here."
-            : "Requests you respond to will be listed here."}
+            ? "New return-date change requests will appear here."
+            : "Processed requests will be listed here."}
         </Text>
       </View>
     );
 
+  /* ---------- UI ---------- */
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
@@ -495,17 +483,18 @@ export default function ExtensionRequests() {
           style={styles.backBtn}
           hitSlop={8}
         >
-          <Ionicons name="arrow-back" size={22} color={C.text} />
+          <Ionicons name="chevron-back" size={20} color={C.text} />
         </Pressable>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Extension Requests</Text>
           <Text style={styles.subtitle}>
-            {counts.pending || 0} waiting for your reply
+            {counts.pending || 0} pending{" "}
+            {counts.pending === 1 ? "request" : "requests"}
           </Text>
         </View>
       </View>
 
-      {/* Filter tabs */}
+      {/* Tabs */}
       <View style={styles.tabs}>
         {FILTERS.map((f) => {
           const active = filter === f.key;
@@ -518,13 +507,13 @@ export default function ExtensionRequests() {
               <Text style={[styles.tabText, active && styles.tabTextActive]}>
                 {f.label}
               </Text>
-              <View style={[styles.tabCount, active && styles.tabCountActive]}>
+              {!!counts[f.key] && (
                 <Text
-                  style={[styles.tabCountText, active && { color: C.accent }]}
+                  style={[styles.tabCount, active && styles.tabCountActive]}
                 >
-                  {counts[f.key] || 0}
+                  {counts[f.key]}
                 </Text>
-              </View>
+              )}
             </Pressable>
           );
         })}
@@ -536,8 +525,9 @@ export default function ExtensionRequests() {
         renderItem={({ item }) => (
           <RequestCard
             item={item}
-            onAccept={handleAccept}
+            onApprove={handleApprove}
             onDecline={handleDecline}
+            busy={processingId === item.id}
           />
         )}
         contentContainerStyle={[
@@ -546,35 +536,45 @@ export default function ExtensionRequests() {
         ]}
         ListEmptyComponent={EmptyState}
         showsVerticalScrollIndicator={false}
-        refreshing={loading && requests.length > 0}
-        onRefresh={fetchExtensions}
+        refreshing={refreshing}
+        onRefresh={() => fetchExtensions(true)}
       />
 
-      {/* Reject Reason Modal */}
-      <Modal visible={rejectModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Reject Extension</Text>
-            <Text style={styles.modalSub}>Provide a reason for rejection.</Text>
+      {/* Decline modal */}
+      <Modal
+        visible={!!rejectItem}
+        transparent
+        animationType="fade"
+        onRequestClose={closeRejectModal}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Decline request</Text>
+            <Text style={styles.modalSub}>
+              The customer will see this reason.
+            </Text>
 
             <TextInput
-              style={styles.textInput}
-              placeholder="e.g., Vehicle booked by another customer..."
+              style={styles.modalInput}
+              placeholder="e.g. Vehicle is booked by another customer"
+              placeholderTextColor={C.muted}
               value={rejectReason}
               onChangeText={setRejectReason}
               multiline
-              numberOfLines={3}
+              maxLength={200}
+              autoFocus
             />
 
             <View style={styles.modalActions}>
               <Pressable
-                style={[styles.modalBtn, { backgroundColor: "#F1F5F9" }]}
-                onPress={() => {
-                  setRejectModalVisible(false);
-                  setRejectItem(null);
-                }}
+                style={[styles.modalBtn, styles.modalBtnGhost]}
+                onPress={closeRejectModal}
+                disabled={rejecting}
               >
-                <Text style={{ color: "#475569", fontWeight: "600" }}>
+                <Text style={[styles.modalBtnText, { color: C.sub }]}>
                   Cancel
                 </Text>
               </Pressable>
@@ -582,22 +582,23 @@ export default function ExtensionRequests() {
               <Pressable
                 style={[
                   styles.modalBtn,
-                  {
-                    backgroundColor: !rejectReason.trim()
-                      ? "#FCA5A5"
-                      : "#EF4444",
-                  },
+                  { backgroundColor: C.red },
+                  (!rejectReason.trim() || rejecting) && { opacity: 0.5 },
                 ]}
                 onPress={confirmDecline}
-                disabled={!rejectReason.trim()}
+                disabled={!rejectReason.trim() || rejecting}
               >
-                <Text style={{ color: "#FFF", fontWeight: "600" }}>
-                  Confirm Reject
-                </Text>
+                {rejecting ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={[styles.modalBtnText, { color: "#fff" }]}>
+                    Decline
+                  </Text>
+                )}
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -607,229 +608,186 @@ export default function ExtensionRequests() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg },
 
+  /* Header */
   header: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 12,
-    gap: 12,
+    paddingTop: 6,
+    paddingBottom: 10,
+    gap: 10,
   },
   backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     backgroundColor: C.card,
     borderWidth: 1,
     borderColor: C.border,
     alignItems: "center",
     justifyContent: "center",
   },
-  title: { fontSize: 20, fontWeight: "700", color: C.text },
-  subtitle: { fontSize: 13, color: C.sub, marginTop: 2 },
+  title: { fontSize: 18, fontWeight: "700", color: C.text },
+  subtitle: { fontSize: 12, color: C.sub, marginTop: 1 },
 
+  /* Tabs */
   tabs: {
     flexDirection: "row",
     marginHorizontal: 16,
-    padding: 4,
-    backgroundColor: "#EEF2F6",
-    borderRadius: 14,
-    marginBottom: 8,
+    marginBottom: 6,
+    padding: 3,
+    backgroundColor: "#E9EDF3",
+    borderRadius: 10,
   },
   tab: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 9,
-    borderRadius: 10,
-    gap: 6,
+    paddingVertical: 7,
+    borderRadius: 8,
+    gap: 5,
   },
   tabActive: {
     backgroundColor: C.card,
     shadowColor: "#0F172A",
     shadowOpacity: 0.06,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
   tabText: { fontSize: 13, fontWeight: "600", color: C.sub },
   tabTextActive: { color: C.text },
   tabCount: {
-    minWidth: 20,
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.sub,
+    backgroundColor: "#DDE3EB",
     paddingHorizontal: 6,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: "#E2E8F0",
-    alignItems: "center",
-    justifyContent: "center",
+    paddingVertical: 1,
+    borderRadius: 8,
+    overflow: "hidden",
   },
-  tabCountActive: { backgroundColor: C.accentBg },
-  tabCountText: { fontSize: 11, fontWeight: "700", color: C.sub },
+  tabCountActive: { color: C.primary, backgroundColor: C.primarySoft },
 
-  list: { padding: 16, paddingBottom: 40, gap: 14 },
+  /* List */
+  list: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 32, gap: 10 },
 
+  /* Card */
   card: {
     backgroundColor: C.card,
-    borderRadius: 18,
-    padding: 16,
+    borderRadius: 14,
+    padding: 12,
     borderWidth: 1,
     borderColor: C.border,
   },
-  cardTop: {
+  rowTop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  thumb: { width: 44, height: 44, borderRadius: 10, backgroundColor: C.soft },
+  thumbEmpty: { alignItems: "center", justifyContent: "center" },
+  vehicleName: { fontSize: 15, fontWeight: "700", color: C.text },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3 },
+  plate: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    color: C.text,
+    borderWidth: 1,
+    borderColor: C.text,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  metaText: { flex: 1, fontSize: 11, color: C.muted },
+  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  badgeText: { fontSize: 11, fontWeight: "700" },
+
+  /* Dates */
+  dateStrip: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 14,
+    alignItems: "center",
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: C.soft,
+    borderRadius: 10,
     gap: 8,
   },
-  reqId: { fontSize: 14, fontWeight: "700", color: C.text },
-  reqTime: { fontSize: 12, color: C.muted, marginTop: 2 },
-  statusPill: {
+  dateLabel: {
+    fontSize: 10,
+    color: C.muted,
+    marginBottom: 2,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  dateOld: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: C.sub,
+    textDecorationLine: "line-through",
+  },
+  dateNew: { fontSize: 13, fontWeight: "700", color: C.primary },
+  daysChip: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
-    gap: 6,
-  },
-  statusDot: { width: 6, height: 6, borderRadius: 3 },
-  statusText: { fontSize: 12, fontWeight: "600" },
-
-  vehicleRow: { flexDirection: "row", gap: 12, alignItems: "center" },
-  carImg: {
-    width: 88,
-    height: 60,
-    borderRadius: 12,
-    backgroundColor: "#F1F5F9",
-  },
-  carPlaceholder: { alignItems: "center", justifyContent: "center" },
-  carName: { fontSize: 16, fontWeight: "700", color: C.text },
-  carType: { fontSize: 12, color: C.sub, marginTop: 2 },
-  plate: {
-    alignSelf: "flex-start",
-    marginTop: 6,
-    paddingHorizontal: 8,
+    backgroundColor: C.primarySoft,
+    paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: 6,
-    borderWidth: 1.5,
-    borderColor: C.text,
-    backgroundColor: "#FFFFFF",
+    gap: 1,
   },
-  plateText: {
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1,
-    color: C.text,
-  },
+  daysText: { fontSize: 11, fontWeight: "700", color: C.primary },
 
-  dateBox: {
+  /* Customer */
+  customerRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 16,
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: C.accentBg,
+    gap: 8,
+    marginTop: 10,
   },
-  dateCol: { flex: 1 },
-  dateLabel: { fontSize: 11, color: C.sub, marginBottom: 4 },
-  dateValue: { fontSize: 15, fontWeight: "700", color: C.text },
-  dateOld: { color: C.sub, textDecorationLine: "line-through" },
-  dateTime: { fontSize: 12, color: C.sub, marginTop: 2 },
-  dateMiddle: { alignItems: "center", paddingHorizontal: 6 },
-  extraPill: {
-    backgroundColor: C.accent,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginBottom: 6,
-  },
-  extraText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  arrowLine: { flexDirection: "row", alignItems: "center" },
-  line: {
-    width: 36,
-    height: 1.5,
-    backgroundColor: C.accent,
-    opacity: 0.5,
-    marginRight: -4,
-  },
-
-  chargeRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 12,
-    paddingHorizontal: 2,
-  },
-  chargeLabel: { fontSize: 13, color: C.sub },
-  chargeValue: { fontSize: 16, fontWeight: "700", color: C.text },
-
-  divider: { height: 1, backgroundColor: C.border, marginVertical: 14 },
-
-  customerRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   avatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "#EFF6FF",
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: C.primarySoft,
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { fontSize: 14, fontWeight: "700", color: "#2563EB" },
-  custName: { fontSize: 15, fontWeight: "600", color: C.text },
-  custSub: { fontSize: 12, color: C.sub, marginTop: 2 },
-  callBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: C.greenBg,
+  avatarText: { fontSize: 11, fontWeight: "700", color: C.primary },
+  custName: { fontSize: 13, fontWeight: "600", color: C.text },
+  custPhone: { fontSize: 11, color: C.sub, marginTop: 1 },
+  rate: { fontSize: 12, fontWeight: "600", color: C.text },
+  iconBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: C.greenSoft,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  reasonBox: {
-    marginTop: 14,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#F8FAFC",
-    borderLeftWidth: 3,
-    borderLeftColor: C.border,
-  },
-  reasonHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 4,
-  },
-  reasonLabel: { fontSize: 12, fontWeight: "600", color: C.sub },
-  reasonText: { fontSize: 14, lineHeight: 20, color: C.text },
+  /* Reason / processed */
+  reason: { fontSize: 12, lineHeight: 17, color: C.text, marginTop: 8 },
+  reasonLabel: { color: C.sub, fontWeight: "600" },
+  processed: { fontSize: 11, color: C.sub, marginTop: 8 },
 
-  processedRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 12,
-    paddingHorizontal: 4,
-  },
-  processedText: { fontSize: 11, color: C.sub, marginLeft: 6 },
-
-  actions: { flexDirection: "row", gap: 10, marginTop: 16 },
+  /* Actions */
+  actions: { flexDirection: "row", gap: 8, marginTop: 10 },
   btn: {
     flex: 1,
-    height: 48,
-    borderRadius: 14,
-    flexDirection: "row",
+    height: 38,
+    borderRadius: 9,
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
   },
-  btnDecline: {
+  btnOutline: {
+    borderWidth: 1,
+    borderColor: "#F5C2C2",
     backgroundColor: C.card,
-    borderWidth: 1.5,
-    borderColor: "#FECACA",
   },
-  btnAccept: { backgroundColor: C.green },
-  btnText: { fontSize: 15, fontWeight: "700" },
+  btnSolid: { backgroundColor: C.green },
+  btnText: { fontSize: 13, fontWeight: "700" },
 
+  /* Empty */
   empty: {
     flex: 1,
     alignItems: "center",
@@ -837,62 +795,64 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
   },
   emptyIcon: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: C.accentBg,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: C.primarySoft,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 16,
+    marginBottom: 12,
   },
-  emptyTitle: { fontSize: 17, fontWeight: "700", color: C.text },
+  emptyTitle: { fontSize: 15, fontWeight: "700", color: C.text },
   emptySub: {
-    fontSize: 14,
+    fontSize: 13,
     color: C.sub,
     textAlign: "center",
-    marginTop: 6,
-    lineHeight: 20,
+    marginTop: 4,
+    lineHeight: 18,
   },
+
+  /* Modal */
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+    backgroundColor: "rgba(15,23,42,0.45)",
     justifyContent: "center",
     alignItems: "center",
+    padding: 24,
   },
-  modalContent: {
-    backgroundColor: "#FFF",
-    width: "85%",
-    borderRadius: 16,
-    padding: 20,
+  modalCard: {
+    width: "100%",
+    backgroundColor: C.card,
+    borderRadius: 14,
+    padding: 18,
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#0F172A",
-    marginBottom: 8,
-  },
-  modalSub: {
-    fontSize: 14,
-    color: "#64748B",
-    marginBottom: 16,
-    lineHeight: 20,
-  },
-  textInput: {
-    backgroundColor: "#F8FAFC",
+  modalTitle: { fontSize: 16, fontWeight: "700", color: C.text },
+  modalSub: { fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 12 },
+  modalInput: {
+    minHeight: 76,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 15,
-    color: "#0F172A",
+    borderColor: C.border,
+    borderRadius: 10,
+    backgroundColor: C.soft,
+    padding: 10,
+    fontSize: 14,
+    color: C.text,
     textAlignVertical: "top",
-    minHeight: 80,
   },
   modalActions: {
     flexDirection: "row",
     justifyContent: "flex-end",
-    gap: 12,
-    marginTop: 24,
+    gap: 8,
+    marginTop: 14,
   },
-  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
+  modalBtn: {
+    minWidth: 92,
+    height: 38,
+    paddingHorizontal: 14,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalBtnGhost: { backgroundColor: "#F1F5F9" },
+  modalBtnText: { fontSize: 13, fontWeight: "700" },
 });

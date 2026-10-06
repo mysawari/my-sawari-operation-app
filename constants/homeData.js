@@ -60,6 +60,16 @@ export const quickActions = [
     color: "#14B8A6",
     route: "/screens/Received",
   },
+  {
+    id: 8,
+    title: "Pickup & Drop",
+    subtitle: "Assign drivers, start trips & track arrivals",
+    icon: MaterialCommunityIcons,
+    iconName: "car-clock",
+    bg: "#F5F3FF",
+    color: "#7C3AED",
+    route: "/screens/PickupDrop",
+  },
   // NEW TAB
   {
     id: 7,

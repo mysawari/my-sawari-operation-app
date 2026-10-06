@@ -35,6 +35,13 @@ const MONTHS = [
   "Dec",
 ];
 
+// Same options as the Create Booking screen
+const PAYMENT_METHODS = [
+  { value: "cash", label: "Cash" },
+  { value: "phonepe", label: "PhonePe" },
+  { value: "razorpay", label: "Razorpay" },
+];
+
 // Format a Date's *local* wall-clock day as "DD-MMM-YYYY" with no Intl
 // involvement at all, so there's no risk of locale-specific separators.
 const formatLocalDate = (date) => {
@@ -55,7 +62,6 @@ export default function BookingDetailsScreen() {
   const [booking, setBooking] = useState(null);
 
   const [loadingUpdate, setLoadingUpdate] = useState(false);
-
   const [loadingCancel, setLoadingCancel] = useState(false);
 
   const [bookingStatus, setBookingStatus] = useState("");
@@ -72,19 +78,20 @@ export default function BookingDetailsScreen() {
   const [bookingAmount, setBookingAmount] = useState("");
   const [securityDeposit, setSecurityDeposit] = useState("");
   const [fastagBalance, setFastagBalance] = useState("");
+
+  // Payment Method (same as Create Booking)
   const [paymentMethod, setPaymentMethod] = useState("cash");
+  const [upiLast4, setUpiLast4] = useState("");
 
   // SCHEDULE STATES
   // pickupDate/dropDate are DISPLAY-ONLY strings ("DD-MMM-YYYY"), always
-  // derived from pickupDateObj/dropDateObj below — never parsed back into
-  // a Date. pickupDateObj/dropDateObj are the actual source of truth used
-  // for totalDays math and the backend payload.
-  const [pickupDate, setPickupDate] = useState("15-Jul-2026");
-  const [dropDate, setDropDate] = useState("20-Jul-2026");
-  const [pickupDateObj, setPickupDateObj] = useState(new Date(2026, 6, 15));
-  const [dropDateObj, setDropDateObj] = useState(new Date(2026, 6, 20));
-  const [pickupTime, setPickupTime] = useState("09:00 AM");
-  const [dropTime, setDropTime] = useState("06:00 PM");
+  // derived from pickupDateObj/dropDateObj — never parsed back into a Date.
+  const [pickupDate, setPickupDate] = useState("");
+  const [dropDate, setDropDate] = useState("");
+  const [pickupDateObj, setPickupDateObj] = useState(null);
+  const [dropDateObj, setDropDateObj] = useState(null);
+  const [pickupTime, setPickupTime] = useState("08:00 AM");
+  const [dropTime, setDropTime] = useState("08:00 AM");
 
   // Native Picker Control States
   const [pickerMode, setPickerMode] = useState("date");
@@ -103,11 +110,7 @@ export default function BookingDetailsScreen() {
   const [vehicleSearch, setVehicleSearch] = useState("");
 
   const [needPickupDrop, setNeedPickupDrop] = useState(false);
-
-  const [serviceType, setServiceType] = useState("pickup_drop");
-  // pickup
-  // drop
-  // pickup_drop
+  const [serviceType, setServiceType] = useState("pickup_drop"); // pickup | drop | pickup_drop
 
   const [pickupLocation, setPickupLocation] = useState("");
   const [pickupLandmark, setPickupLandmark] = useState("");
@@ -121,8 +124,7 @@ export default function BookingDetailsScreen() {
 
   const [pickupDropNotes, setPickupDropNotes] = useState("");
 
-  // Bill Summary (invoice-style breakdown) - collapsed by default, tap to
-  // expand/close, Zomato-style. Matches the CreateBookingScreen pattern.
+  // Bill Summary (collapsed by default)
   const [showBillSummary, setShowBillSummary] = useState(false);
 
   const filteredVehicles = vehicles.filter((vehicle) => {
@@ -148,16 +150,14 @@ export default function BookingDetailsScreen() {
     const year = Number(parts.find((p) => p.type === "year")?.value);
 
     if (!day || !month || !year) return null;
-    return { day, month: month - 1, year }; // monthIndex is 0-based
+    return { day, month: month - 1, year };
   };
 
-  // Build a plain local-midnight Date (safe for day-diff math) from IST
-  // calendar parts.
+  // Local-midnight Date from IST calendar parts (safe for day-diff math)
   const dateFromParts = (parts) =>
     parts ? new Date(parts.year, parts.month, parts.day) : null;
 
-  // Convert a Date object straight to backend-compliant "YYYY-MM-DD" — no
-  // string parsing involved, just reading numbers off the object.
+  // Date object → "YYYY-MM-DD"
   const formatToBackendDate = (dateObj) => {
     if (!dateObj) return "";
     const year = dateObj.getFullYear();
@@ -166,11 +166,7 @@ export default function BookingDetailsScreen() {
     return `${year}-${month}-${day}`;
   };
 
-  // ── LIVE "No. of Days" ──
-  // Pure calendar-date difference between the two Date objects — both
-  // already normalized to local midnight, so this is just a subtraction.
-  // No parsing of any kind happens here, so there's nothing for Hermes'
-  // Date.parse to get wrong.
+  // Calendar-day difference between two Date objects (minimum 1)
   const calculateTotalDays = (startObj, endObj) => {
     if (!startObj || !endObj) return 1;
 
@@ -185,15 +181,17 @@ export default function BookingDetailsScreen() {
       endObj.getDate(),
     );
 
-    const diffMs = end.getTime() - start.getTime();
-    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+    const diffDays = Math.round(
+      (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24),
+    );
 
     return diffDays < 1 ? 1 : diffDays;
   };
 
-  const totalDays = useMemo(() => {
-    return calculateTotalDays(pickupDateObj, dropDateObj);
-  }, [pickupDateObj, dropDateObj]);
+  const totalDays = useMemo(
+    () => calculateTotalDays(pickupDateObj, dropDateObj),
+    [pickupDateObj, dropDateObj],
+  );
 
   // Main Initializer Function
   const initializeScreenData = useCallback(
@@ -206,86 +204,59 @@ export default function BookingDetailsScreen() {
       try {
         const [vehicleRes, bookingRes] = await Promise.all([
           api.get("/vehicles/getAll", {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
+            headers: { Authorization: `Bearer ${token}` },
           }),
-
           api.get(`/leads/booking-details/${id}`, {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
+            headers: { Authorization: `Bearer ${token}` },
           }),
         ]);
 
         setVehicles(vehicleRes.data.data || []);
 
         const data = bookingRes?.data?.booking;
-
-        if (!data) {
-          throw new Error("Booking not found");
-        }
+        if (!data) throw new Error("Booking not found");
 
         setBooking(data);
-
         setBookingStatus(data.status);
 
         setCustomerName(data.customerName || "");
-
         setMobileNumber(data.mobileNumber || "");
-
         setAltNumber(data.alternateMobileNumber || "");
-
         setOccupation(data.occupation || "");
-
         setDestination(data.destination || "");
-
         setAadharCard(data.aadhaarNumber || "");
-
         setDlNumber(data.drivingLicenseNumber || "");
 
-        // Pricing fields live under the nested `payment` object in the
-        // schema, NOT as flat fields on the booking document.
+        // Pricing fields live under the nested `payment` object
         setBookingAmount(String(data.payment?.bookingAmountPaid || ""));
-
         setDiscount(String(data.payment?.discountAmount || ""));
-
         setSecurityDeposit(String(data.payment?.securityDeposit || ""));
-
         setFastagBalance(String(data.payment?.fastagAmount || ""));
 
-        setPaymentMethod(data.payment?.paymentMethod || "cash");
+        // Payment method (+ UPI last 4 for PhonePe)
+        const method = data.payment?.paymentMethod || "cash";
+        setPaymentMethod(
+          PAYMENT_METHODS.some((m) => m.value === method) ? method : "cash",
+        );
+        setUpiLast4(String(data.payment?.upiLast4 || data.upiLast4 || ""));
 
         setNeedPickupDrop(data.pickupDropRequired || false);
-
         setServiceType(data.serviceType || "pickup_drop");
 
         setPickupLocation(data.pickup?.location || "");
-
         setPickupLandmark(data.pickup?.landmark || "");
-
         setPickupMapLink(data.pickup?.mapLink || "");
-
         setPickupCharge(String(data.pickup?.charge || ""));
 
         setDropLocation(data.drop?.location || "");
-
         setDropLandmark(data.drop?.landmark || "");
-
         setDropMapLink(data.drop?.mapLink || "");
-
         setDropCharge(String(data.drop?.charge || ""));
 
         setPickupDropNotes(data.pickupDropNotes || "");
 
-        // Extract IST calendar parts once per date, then derive BOTH the
-        // display string and the calculation Date object from the same
-        // numbers — no re-parsing, so display and math can never disagree.
-        const pickupParts = getISTDateParts(data.fromDate);
-        const dropParts = getISTDateParts(data.toDate);
-
-        const pickupObj = dateFromParts(pickupParts);
-        const dropObj = dateFromParts(dropParts);
+        const pickupObj = dateFromParts(getISTDateParts(data.fromDate));
+        const dropObj = dateFromParts(getISTDateParts(data.toDate));
 
         setPickupDate(pickupObj ? formatLocalDate(pickupObj) : "");
         setDropDate(dropObj ? formatLocalDate(dropObj) : "");
@@ -293,32 +264,23 @@ export default function BookingDetailsScreen() {
         setDropDateObj(dropObj);
 
         setPickupTime(data.pickupTime || "08:00 AM");
-
         setDropTime(data.dropTime || "08:00 AM");
-
-        // totalDays is now derived automatically via useMemo above —
-        // no manual set needed here.
 
         if (data.vehicleId) {
           setSelectedVehicle(data.vehicleId);
-
           setVehicleInfo({
             model: data.vehicleId.vehicleName,
             plateNumber: data.vehicleId.vehicleNumber,
           });
         }
       } catch (err) {
-        console.log("===== BOOKING ERROR =====");
-        console.log("Status:", err.response?.status);
-        console.log("Message:", err.message);
-
+        console.log("BOOKING ERROR:", err.response?.status, err.message);
         Alert.alert(
           "Error",
           err.response?.data?.message || err.message || "Something went wrong",
         );
       } finally {
         setRefreshing(false);
-
         setScreenLoading(false);
       }
     },
@@ -328,10 +290,6 @@ export default function BookingDetailsScreen() {
   useEffect(() => {
     initializeScreenData();
   }, [initializeScreenData]);
-
-  const handleRefresh = () => {
-    initializeScreenData(true);
-  };
 
   const openMapLink = async (url) => {
     if (!url || !url.trim()) {
@@ -346,14 +304,33 @@ export default function BookingDetailsScreen() {
     }
   };
 
+  // Parses "08:00 AM" style strings into {hours, minutes}
+  const parseTimeToHM = (timeStr) => {
+    const match = (timeStr || "").match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (!match) return { hours: 8, minutes: 0 };
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    const period = match[3].toUpperCase();
+    if (period === "PM" && hours !== 12) hours += 12;
+    if (period === "AM" && hours === 12) hours = 0;
+    return { hours, minutes };
+  };
+
   const openPicker = (type, target) => {
+    if (bookingStatus === "cancelled") return;
+
     setPickerMode(type);
     setCurrentPickerTarget(target);
 
     let initialDate = new Date();
     if (type === "date") {
       const targetVal = target === "pickupDate" ? pickupDateObj : dropDateObj;
-      initialDate = targetVal || new Date();
+      initialDate = targetVal ? new Date(targetVal) : new Date();
+    } else {
+      const { hours, minutes } = parseTimeToHM(
+        target === "pickupTime" ? pickupTime : dropTime,
+      );
+      initialDate.setHours(hours, minutes, 0, 0);
     }
 
     setPickerDateValue(initialDate);
@@ -365,42 +342,39 @@ export default function BookingDetailsScreen() {
       setShowPicker(false);
     }
 
-    if (event.type === "dismissed" || !selectedDate) {
-      return;
-    }
+    if (event?.type === "dismissed" || !selectedDate) return;
 
     setPickerDateValue(selectedDate);
 
     if (pickerMode === "date") {
       const formattedDate = formatLocalDate(selectedDate);
-      // Normalize to local midnight — this Date object is what totalDays
-      // and the backend payload are built from, so keep it in lockstep
-      // with the display string set right below it.
       const normalizedObj = new Date(
         selectedDate.getFullYear(),
         selectedDate.getMonth(),
         selectedDate.getDate(),
       );
 
-      // Updating pickupDate/pickupDateObj (or drop-) below automatically
-      // recalculates `totalDays` (useMemo) on the very next render —
-      // that's what gives the real-time "No. of Days" update.
       if (currentPickerTarget === "pickupDate") {
         setPickupDate(formattedDate);
         setPickupDateObj(normalizedObj);
       }
 
       if (currentPickerTarget === "dropDate") {
+        if (
+          pickupDateObj &&
+          normalizedObj.getTime() < pickupDateObj.getTime()
+        ) {
+          alert("Drop date cannot be before pickup date");
+          return;
+        }
         setDropDate(formattedDate);
         setDropDateObj(normalizedObj);
       }
     } else {
-      // 12-Hour standard string formatting with AM/PM
       let hours = selectedDate.getHours();
       const minutes = String(selectedDate.getMinutes()).padStart(2, "0");
       const ampm = hours >= 12 ? "PM" : "AM";
-      hours = hours % 12;
-      hours = hours ? hours : 12;
+      hours = hours % 12 || 12;
       const formattedTime = `${String(hours).padStart(2, "0")}:${minutes} ${ampm}`;
 
       if (currentPickerTarget === "pickupTime") setPickupTime(formattedTime);
@@ -412,12 +386,19 @@ export default function BookingDetailsScreen() {
     if (!customerName.trim()) return alert("Customer name is required");
     if (!mobileNumber.trim()) return alert("Mobile number is required");
     if (!selectedVehicle) return alert("Please select a vehicle");
+    if (!pickupDateObj || !dropDateObj) {
+      return alert("Pickup and drop dates are required");
+    }
+    if (dropDateObj.getTime() < pickupDateObj.getTime()) {
+      return alert("Drop date cannot be before pickup date");
+    }
+    if (paymentMethod === "phonepe" && upiLast4 && upiLast4.length !== 4) {
+      return alert("UPI last 4 digits must be exactly 4 numbers");
+    }
 
     setLoadingUpdate(true);
 
     try {
-      // Recompute the bill breakdown right here, self-contained, so the
-      // saved payload can never drift from what's on screen.
       const vehicleRent = Number(selectedVehicle?.pricePerDay || 0) * totalDays;
 
       const appliedPickupCharge =
@@ -434,13 +415,10 @@ export default function BookingDetailsScreen() {
 
       const fastagAmount = Number(fastagBalance || 0);
 
-      // Vehicle + Pickup + Drop + FASTag = total billable amount
       const totalAmount =
         vehicleRent + appliedPickupCharge + appliedDropCharge + fastagAmount;
 
-      const discountAmount = Number(discount || 0);
-      const bookingAmountPaid = Number(bookingAmount || 0);
-      const securityAmount = Number(securityDeposit || 0);
+      const finalUpiLast4 = paymentMethod === "phonepe" ? upiLast4 : "";
 
       const payload = {
         customerName,
@@ -458,14 +436,11 @@ export default function BookingDetailsScreen() {
 
         fromDate: formatToBackendDate(pickupDateObj),
         toDate: formatToBackendDate(dropDateObj),
-
         pickupTime,
         dropTime,
-
         totalDays,
 
         pickupDropRequired: needPickupDrop,
-
         serviceType,
 
         pickup: {
@@ -474,7 +449,6 @@ export default function BookingDetailsScreen() {
           mapLink: pickupMapLink,
           charge: Number(pickupCharge || 0),
         },
-
         drop: {
           location: dropLocation,
           landmark: dropLandmark,
@@ -484,61 +458,49 @@ export default function BookingDetailsScreen() {
 
         pickupDropNotes,
 
-        // Nested under `payment` to match the schema. This is what the
-        // pre-save hook reads to compute balanceAmount / totalCollected /
-        // paymentStatus.
+        // Also sent at top level, same as the Create Booking payload
+        paymentMethod,
+        upiLast4: finalUpiLast4,
+
         payment: {
           vehicleRent,
           pickupCharge: appliedPickupCharge,
           dropCharge: appliedDropCharge,
           fastagAmount,
           totalAmount,
-          discountAmount,
-          securityDeposit: securityAmount,
-          bookingAmountPaid,
+          discountAmount: Number(discount || 0),
+          securityDeposit: Number(securityDeposit || 0),
+          bookingAmountPaid: Number(bookingAmount || 0),
           paymentMethod,
+          upiLast4: finalUpiLast4,
         },
       };
 
       await api.put(`/leads/booking-update/${id}`, payload, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       alert("Booking updated successfully.");
-
-      initializeScreenData();
+      initializeScreenData(true);
     } catch (err) {
       console.log("Booking error:", err?.message);
-
       alert(err.response?.data?.message || "Unable to update booking");
     } finally {
       setLoadingUpdate(false);
     }
   };
+
   const cancelBooking = async () => {
     setLoadingCancel(true);
-
     try {
       await api.put(
         `/leads/${id}/cancel`,
         {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
+        { headers: { Authorization: `Bearer ${token}` } },
       );
 
       Alert.alert("Success", "Booking cancelled successfully.", [
-        {
-          text: "OK",
-          onPress: () => {
-            console.log("Going back...");
-            router.back();
-          },
-        },
+        { text: "OK", onPress: () => router.back() },
       ]);
     } catch (err) {
       console.log("Cancel Error:", err?.message);
@@ -555,7 +517,7 @@ export default function BookingDetailsScreen() {
     return (
       <SafeAreaView style={styles.centeredContainer}>
         <ActivityIndicator size="large" color="#2563EB" />
-        <Text style={styles.loadingText}>Fetching profile details...</Text>
+        <Text style={styles.loadingText}>Fetching booking details...</Text>
       </SafeAreaView>
     );
   }
@@ -574,32 +536,24 @@ export default function BookingDetailsScreen() {
       : 0;
 
   const serviceAmount = pickupAmount + dropAmount;
-
   const fastagAmount = Number(fastagBalance || 0);
-
-  // Rental charges only (Vehicle + Pickup + Drop + FASTag)
   const rentalAmount = vehicleAmount + serviceAmount + fastagAmount;
 
   const discountAmount = Number(discount || 0);
   const bookingAdvance = Number(bookingAmount || 0);
   const securityAmount = Number(securityDeposit || 0);
 
-  // Customer payable (gross) — the headline "total" shown in the header and
-  // as "Final Payable Amount" in the bill. Discount is NOT subtracted here;
-  // it only reduces what's still owed (see balanceAmount below), the same
-  // way Advance reduces what's still owed.
   const finalAmount = Math.max(rentalAmount, 0);
-
-  // Remaining balance — Advance AND Discount both come off here.
   const balanceAmount = Math.max(
     finalAmount - bookingAdvance - discountAmount,
     0,
   );
-
-  // Total money collected today (advance + security deposit)
   const totalCollected = bookingAdvance + securityAmount;
 
   const editable = bookingStatus !== "cancelled";
+
+  const paymentLabel =
+    PAYMENT_METHODS.find((m) => m.value === paymentMethod)?.label || "Cash";
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
@@ -615,50 +569,40 @@ export default function BookingDetailsScreen() {
           <Text style={styles.navBarTitle}>Booking Details</Text>
           {selectedVehicle && (
             <>
-              <Text
-                style={{
-                  fontSize: 18,
-                  fontWeight: "800",
-                  color: "#16A34A",
-                  marginTop: 2,
-                }}
-              >
+              <Text style={styles.headerAmount}>
                 ₹{finalAmount.toLocaleString()}
               </Text>
-              <Text style={{ fontSize: 12, color: "#64748B", marginTop: 2 }}>
+              <Text style={styles.headerSub}>
                 Advance ₹{bookingAdvance.toLocaleString()} • Due ₹
                 {balanceAmount.toLocaleString()}
               </Text>
             </>
           )}
           <View
-            style={{
-              marginTop: 6,
-              backgroundColor:
-                bookingStatus === "confirmed"
-                  ? "#DCFCE7"
-                  : bookingStatus === "cancelled"
-                    ? "#FEE2E2"
-                    : "#DBEAFE",
-
-              alignSelf: "center",
-              paddingHorizontal: 10,
-              paddingVertical: 3,
-              borderRadius: 20,
-            }}
+            style={[
+              styles.statusPill,
+              {
+                backgroundColor:
+                  bookingStatus === "confirmed"
+                    ? "#DCFCE7"
+                    : bookingStatus === "cancelled"
+                      ? "#FEE2E2"
+                      : "#DBEAFE",
+              },
+            ]}
           >
             <Text
-              style={{
-                fontSize: 11,
-                fontWeight: "700",
-                color:
-                  bookingStatus === "confirmed"
-                    ? "#166534"
-                    : bookingStatus === "cancelled"
-                      ? "#B91C1C"
-                      : "#1D4ED8",
-                textTransform: "uppercase",
-              }}
+              style={[
+                styles.statusPillText,
+                {
+                  color:
+                    bookingStatus === "confirmed"
+                      ? "#166534"
+                      : bookingStatus === "cancelled"
+                        ? "#B91C1C"
+                        : "#1D4ED8",
+                },
+              ]}
             >
               {bookingStatus}
             </Text>
@@ -674,6 +618,7 @@ export default function BookingDetailsScreen() {
         <ScrollView
           contentContainerStyle={styles.scrollContainer}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {/* Customer Details Section */}
           <View style={styles.sectionCard}>
@@ -697,6 +642,7 @@ export default function BookingDetailsScreen() {
               placeholder="Enter 10-digit mobile number"
               placeholderTextColor="#94A3B8"
               keyboardType="phone-pad"
+              maxLength={10}
             />
 
             <Text style={styles.label}>Alternative Contact Number</Text>
@@ -708,6 +654,7 @@ export default function BookingDetailsScreen() {
               placeholder="Enter backup mobile number"
               placeholderTextColor="#94A3B8"
               keyboardType="phone-pad"
+              maxLength={10}
             />
 
             <Text style={styles.label}>Occupation</Text>
@@ -734,7 +681,7 @@ export default function BookingDetailsScreen() {
               placeholderTextColor="#94A3B8"
             />
 
-            <Text style={styles.label}>Identification Reference Number</Text>
+            <Text style={styles.label}>Aadhaar Card Number</Text>
             <TextInput
               editable={editable}
               style={styles.input}
@@ -742,6 +689,8 @@ export default function BookingDetailsScreen() {
               onChangeText={setAadharCard}
               placeholder="Enter unique identification code"
               placeholderTextColor="#94A3B8"
+              keyboardType="numeric"
+              maxLength={12}
             />
 
             <Text style={styles.label}>Driver's License (DL) Number</Text>
@@ -842,12 +791,68 @@ export default function BookingDetailsScreen() {
               </View>
             </View>
           </View>
+
+          {/* Payment Method (same as Create Booking) */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionHeader}>Payment Method</Text>
+
+            <Text style={styles.label}>Payment Type</Text>
+
+            <View
+              style={[styles.segmentedControl, !editable && { opacity: 0.6 }]}
+            >
+              {PAYMENT_METHODS.map((method) => {
+                const active = paymentMethod === method.value;
+                return (
+                  <TouchableOpacity
+                    key={method.value}
+                    disabled={!editable}
+                    style={[
+                      styles.segmentedOption,
+                      active && styles.segmentedOptionActive,
+                    ]}
+                    onPress={() => {
+                      setPaymentMethod(method.value);
+                      if (method.value !== "phonepe") setUpiLast4("");
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.segmentedText,
+                        active && styles.segmentedTextActive,
+                      ]}
+                    >
+                      {method.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {paymentMethod === "phonepe" && (
+              <>
+                <Text style={styles.label}>UPI Last 4 Digits</Text>
+                <TextInput
+                  editable={editable}
+                  style={styles.input}
+                  value={upiLast4}
+                  onChangeText={(text) =>
+                    setUpiLast4(text.replace(/\D/g, "").slice(0, 4))
+                  }
+                  placeholder="Enter last 4 digits"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="number-pad"
+                  maxLength={4}
+                />
+              </>
+            )}
+          </View>
+
           {/* Pickup / Drop Service */}
           <View style={styles.sectionCard}>
             <View style={styles.serviceSectionHeaderRow}>
-              <View>
-                <Text style={styles.sectionHeader}>Pickup & Drop Service</Text>
-              </View>
+              <Text style={styles.sectionHeader}>Pickup & Drop Service</Text>
               {needPickupDrop && serviceAmount > 0 && (
                 <View style={styles.serviceAmountPill}>
                   <Text style={styles.serviceAmountPillText}>
@@ -859,8 +864,11 @@ export default function BookingDetailsScreen() {
 
             <Text style={styles.label}>Need pickup or drop-off?</Text>
 
-            <View style={styles.segmentedControl}>
+            <View
+              style={[styles.segmentedControl, !editable && { opacity: 0.6 }]}
+            >
               <TouchableOpacity
+                disabled={!editable}
                 style={[
                   styles.segmentedOption,
                   !needPickupDrop && styles.segmentedOptionActive,
@@ -879,6 +887,7 @@ export default function BookingDetailsScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
+                disabled={!editable}
                 style={[
                   styles.segmentedOption,
                   needPickupDrop && styles.segmentedOptionActive,
@@ -903,16 +912,8 @@ export default function BookingDetailsScreen() {
 
                 <View style={styles.serviceTypeRow}>
                   {[
-                    {
-                      value: "pickup",
-                      label: "Pickup",
-                      icon: "car-outline",
-                    },
-                    {
-                      value: "drop",
-                      label: "Drop",
-                      icon: "flag-outline",
-                    },
+                    { value: "pickup", label: "Pickup", icon: "car-outline" },
+                    { value: "drop", label: "Drop", icon: "flag-outline" },
                     {
                       value: "pickup_drop",
                       label: "Both",
@@ -923,6 +924,7 @@ export default function BookingDetailsScreen() {
                     return (
                       <TouchableOpacity
                         key={item.value}
+                        disabled={!editable}
                         style={[
                           styles.serviceTypeCard,
                           active && styles.serviceTypeCardActive,
@@ -1156,12 +1158,8 @@ export default function BookingDetailsScreen() {
 
           {/* Trip Schedule Section */}
           <View style={styles.sectionCard}>
-            <View style={styles.serviceSectionHeaderRow}>
-              <Text style={styles.sectionHeader}>Trip Schedule (IST)</Text>
-            </View>
+            <Text style={styles.sectionHeader}>Trip Schedule (IST)</Text>
 
-            {/* Live "No. of Days" indicator — recalculates instantly whenever
-                either pickup or drop date is changed above/below */}
             <View style={styles.durationSummaryBox}>
               <View style={styles.durationSummaryLeft}>
                 <Ionicons
@@ -1184,6 +1182,7 @@ export default function BookingDetailsScreen() {
               <View style={{ flex: 1, marginRight: 8 }}>
                 <Text style={styles.label}>Pickup Date *</Text>
                 <TouchableOpacity
+                  disabled={!editable}
                   style={styles.pickerTrigger}
                   onPress={() => openPicker("date", "pickupDate")}
                 >
@@ -1197,6 +1196,7 @@ export default function BookingDetailsScreen() {
               <View style={{ flex: 1, marginLeft: 8 }}>
                 <Text style={styles.label}>Pickup Time *</Text>
                 <TouchableOpacity
+                  disabled={!editable}
                   style={styles.pickerTrigger}
                   onPress={() => openPicker("time", "pickupTime")}
                 >
@@ -1212,6 +1212,7 @@ export default function BookingDetailsScreen() {
               <View style={{ flex: 1, marginRight: 8 }}>
                 <Text style={styles.label}>Drop Date *</Text>
                 <TouchableOpacity
+                  disabled={!editable}
                   style={styles.pickerTrigger}
                   onPress={() => openPicker("date", "dropDate")}
                 >
@@ -1225,6 +1226,7 @@ export default function BookingDetailsScreen() {
               <View style={{ flex: 1, marginLeft: 8 }}>
                 <Text style={styles.label}>Drop Time *</Text>
                 <TouchableOpacity
+                  disabled={!editable}
                   style={styles.pickerTrigger}
                   onPress={() => openPicker("time", "dropTime")}
                 >
@@ -1237,7 +1239,7 @@ export default function BookingDetailsScreen() {
             </View>
           </View>
 
-          {/* Bill Summary / Invoice Section (Zomato-style expandable bill) */}
+          {/* Bill Summary */}
           {selectedVehicle && (
             <View style={styles.sectionCard}>
               <TouchableOpacity
@@ -1249,10 +1251,8 @@ export default function BookingDetailsScreen() {
                   <Text style={styles.sectionHeader}>Bill Summary</Text>
                   {!showBillSummary && (
                     <Text style={styles.billSummarySubtext}>
-                      {totalDays > 0
-                        ? `${totalDays} day${totalDays > 1 ? "s" : ""} • `
-                        : ""}
-                      Tap to view full bill
+                      {totalDays} day{totalDays > 1 ? "s" : ""} • {paymentLabel}{" "}
+                      • Tap to view full bill
                     </Text>
                   )}
                 </View>
@@ -1272,14 +1272,11 @@ export default function BookingDetailsScreen() {
                 <View style={styles.invoiceBox}>
                   <View style={styles.invoiceRow}>
                     <Text style={styles.invoiceLabel}>
-                      Vehicle Rent{" "}
-                      {totalDays > 0
-                        ? `(₹${Number(
-                            selectedVehicle.pricePerDay || 0,
-                          ).toLocaleString()} × ${totalDays} day${
-                            totalDays > 1 ? "s" : ""
-                          })`
-                        : ""}
+                      Vehicle Rent (₹
+                      {Number(
+                        selectedVehicle.pricePerDay || 0,
+                      ).toLocaleString()}{" "}
+                      × {totalDays} day{totalDays > 1 ? "s" : ""})
                     </Text>
                     <Text style={styles.invoiceValue}>
                       ₹{vehicleAmount.toLocaleString()}
@@ -1341,7 +1338,13 @@ export default function BookingDetailsScreen() {
 
                   {bookingAdvance > 0 && (
                     <View style={styles.invoiceRow}>
-                      <Text style={styles.invoiceLabel}>Advance Paid</Text>
+                      <Text style={styles.invoiceLabel}>
+                        Advance Paid ({paymentLabel}
+                        {paymentMethod === "phonepe" && upiLast4
+                          ? ` •••• ${upiLast4}`
+                          : ""}
+                        )
+                      </Text>
                       <Text style={[styles.invoiceValue, { color: "#16A34A" }]}>
                         − ₹{bookingAdvance.toLocaleString()}
                       </Text>
@@ -1358,15 +1361,18 @@ export default function BookingDetailsScreen() {
                   )}
 
                   <View style={styles.invoiceRow}>
-                    <Text style={styles.invoiceBalanceLabel}>
+                    <Text
+                      style={[
+                        styles.invoiceBalanceLabel,
+                        { color: balanceAmount > 0 ? "#B45309" : "#16A34A" },
+                      ]}
+                    >
                       {balanceAmount > 0 ? "Balance Due" : "Fully Paid"}
                     </Text>
                     <Text
                       style={[
                         styles.invoiceBalanceValue,
-                        {
-                          color: balanceAmount > 0 ? "#B45309" : "#16A34A",
-                        },
+                        { color: balanceAmount > 0 ? "#B45309" : "#16A34A" },
                       ]}
                     >
                       ₹{balanceAmount.toLocaleString()}
@@ -1389,7 +1395,7 @@ export default function BookingDetailsScreen() {
                       <View style={styles.invoiceDivider} />
                       <View style={styles.invoiceRow}>
                         <Text style={styles.invoiceTotalLabel}>
-                          Total Collected Today
+                          Total Collected
                         </Text>
                         <Text style={styles.invoiceTotalValue}>
                           ₹{totalCollected.toLocaleString()}
@@ -1411,22 +1417,16 @@ export default function BookingDetailsScreen() {
             </View>
           )}
 
-          {/* iOS Picker Wrap Sheet */}
+          {/* iOS Picker Sheet */}
           {showPicker && Platform.OS === "ios" && (
-            <Modal
-              transparent
-              animated
-              animationType="fade"
-              visible={showPicker}
-            >
+            <Modal transparent animationType="fade" visible={showPicker}>
               <View style={styles.iosPickerModalContainer}>
                 <View style={styles.iosPickerContentCard}>
                   <DateTimePicker
                     value={pickerDateValue}
                     mode={pickerMode}
                     display="spinner"
-                    onValueChange={onPickerChange}
-                    onDismiss={() => setShowPicker(false)}
+                    onChange={onPickerChange}
                   />
                   <TouchableOpacity
                     style={styles.iosPickerCloseButton}
@@ -1439,48 +1439,38 @@ export default function BookingDetailsScreen() {
             </Modal>
           )}
 
-          {/* Android Picker Core */}
+          {/* Android Picker */}
           {showPicker && Platform.OS === "android" && (
             <DateTimePicker
               value={pickerDateValue}
               mode={pickerMode}
               display="default"
-              onValueChange={onPickerChange}
-              onDismiss={() => setShowPicker(false)}
+              onChange={onPickerChange}
             />
           )}
 
-          <View
-            style={{
-              flexDirection: "row",
-              gap: 10,
-              marginTop: 20,
-            }}
-          >
+          <View style={styles.footerButtons}>
             <TouchableOpacity
               style={[
                 styles.submitButton,
-                {
-                  flex: 1,
-                  backgroundColor: "#2563EB",
-                },
+                { flex: 1 },
+                (loadingUpdate || !editable) && { opacity: 0.6 },
               ]}
               onPress={handleUpdateBooking}
               disabled={loadingUpdate || !editable}
             >
-              <Text style={styles.submitButtonText}>
-                {loadingUpdate ? "Updating..." : "Update Booking"}
-              </Text>
+              {loadingUpdate ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.submitButtonText}>Update Booking</Text>
+              )}
             </TouchableOpacity>
 
             {editable && (
               <TouchableOpacity
                 style={[
                   styles.submitButton,
-                  {
-                    backgroundColor: "#FEE2E2",
-                    paddingHorizontal: 20,
-                  },
+                  { backgroundColor: "#FEE2E2", paddingHorizontal: 20 },
                 ]}
                 onPress={() =>
                   Alert.alert(
@@ -1512,6 +1502,10 @@ export default function BookingDetailsScreen() {
         visible={showVehicleModal}
         animationType="slide"
         transparent={false}
+        onRequestClose={() => {
+          setVehicleSearch("");
+          setShowVehicleModal(false);
+        }}
       >
         <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
           <View style={styles.modalHeader}>
@@ -1531,7 +1525,6 @@ export default function BookingDetailsScreen() {
             <View style={styles.searchContainer}>
               <Ionicons name="search" size={20} color="#64748B" />
               <TextInput
-                editable={editable}
                 placeholder="Search by name, number or color..."
                 placeholderTextColor="#94A3B8"
                 value={vehicleSearch}
@@ -1542,7 +1535,10 @@ export default function BookingDetailsScreen() {
             </View>
           </View>
 
-          <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+          <ScrollView
+            contentContainerStyle={{ paddingBottom: 40 }}
+            keyboardShouldPersistTaps="handled"
+          >
             {filteredVehicles.map((vehicle) => (
               <TouchableOpacity
                 key={vehicle._id}
@@ -1576,13 +1572,7 @@ export default function BookingDetailsScreen() {
                       <Text style={styles.vehicleNameText} numberOfLines={1}>
                         {vehicle.vehicleName}
                       </Text>
-                      <Text
-                        style={{
-                          fontSize: 14,
-                          fontWeight: "800",
-                          color: "#16A34A",
-                        }}
-                      >
+                      <Text style={styles.vehiclePriceText}>
                         ₹{Number(vehicle.pricePerDay || 0).toLocaleString()}/Day
                       </Text>
                     </View>
@@ -1620,6 +1610,25 @@ const styles = StyleSheet.create({
   },
   backButton: { padding: 4 },
   navBarTitle: { fontSize: 18, fontWeight: "700", color: "#0F172A" },
+  headerAmount: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#16A34A",
+    marginTop: 2,
+  },
+  headerSub: { fontSize: 12, color: "#64748B", marginTop: 2 },
+  statusPill: {
+    marginTop: 6,
+    alignSelf: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 20,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
   scrollContainer: { padding: 16, paddingBottom: 40 },
   sectionCard: {
     backgroundColor: "#FFFFFF",
@@ -1695,11 +1704,13 @@ const styles = StyleSheet.create({
   },
   selectorText: { fontSize: 15, color: "#1E293B", flex: 1 },
   row: { flexDirection: "row", justifyContent: "space-between" },
+  footerButtons: { flexDirection: "row", gap: 10, marginTop: 8 },
   submitButton: {
     backgroundColor: "#2563EB",
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 12,
   },
   submitButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
@@ -1754,7 +1765,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  vehicleNameText: { fontSize: 16, fontWeight: "700", color: "#111827" },
+  vehicleNameText: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#111827",
+    marginRight: 8,
+  },
+  vehiclePriceText: { fontSize: 14, fontWeight: "800", color: "#16A34A" },
   vehicleNumberText: { fontSize: 14, color: "#475569", marginTop: 2 },
   vehicleMetaText: { fontSize: 12, color: "#94A3B8", marginTop: 4 },
   iosPickerModalContainer: {
@@ -1774,56 +1792,9 @@ const styles = StyleSheet.create({
     marginRight: 20,
     padding: 10,
   },
-  iosPickerCloseText: {
-    color: "#2563EB",
-    fontWeight: "700",
-    fontSize: 16,
-  },
-  optionRow: {
-    flexDirection: "row",
-    marginTop: 8,
-  },
+  iosPickerCloseText: { color: "#2563EB", fontWeight: "700", fontSize: 16 },
 
-  optionButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    borderRadius: 10,
-    paddingVertical: 12,
-    marginHorizontal: 4,
-  },
-
-  optionButtonActive: {
-    borderColor: "#2563EB",
-    backgroundColor: "#EFF6FF",
-  },
-
-  optionText: {
-    marginLeft: 8,
-    color: "#475569",
-    fontWeight: "600",
-  },
-
-  optionTextActive: {
-    color: "#2563EB",
-  },
-
-  optionColumn: {
-    marginTop: 10,
-  },
-
-  sectionSubHeader: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#0F172A",
-    marginTop: 16,
-    marginBottom: 8,
-  },
-
-  // ── Pickup & Drop Service: revamped ──
+  // ── Pickup & Drop Service ──
   serviceSectionHeaderRow: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -1838,13 +1809,9 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     marginTop: -2,
   },
-  serviceAmountPillText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#16A34A",
-  },
+  serviceAmountPillText: { fontSize: 12, fontWeight: "700", color: "#16A34A" },
 
-  // Segmented Yes/No control
+  // Segmented control (payment method + pickup/drop toggle)
   segmentedControl: {
     flexDirection: "row",
     backgroundColor: "#F1F5F9",
@@ -1870,16 +1837,10 @@ const styles = StyleSheet.create({
       android: { elevation: 1 },
     }),
   },
-  segmentedText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#94A3B8",
-  },
-  segmentedTextActive: {
-    color: "#0F172A",
-  },
+  segmentedText: { fontSize: 13, fontWeight: "600", color: "#94A3B8" },
+  segmentedTextActive: { color: "#0F172A" },
 
-  // Service type: compact 3-up cards
+  // Service type cards
   serviceTypeRow: {
     flexDirection: "row",
     marginTop: 4,
@@ -1897,10 +1858,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FAFC",
     position: "relative",
   },
-  serviceTypeCardActive: {
-    borderColor: "#2563EB",
-    backgroundColor: "#EFF6FF",
-  },
+  serviceTypeCardActive: { borderColor: "#2563EB", backgroundColor: "#EFF6FF" },
   serviceTypeCheck: {
     position: "absolute",
     top: 6,
@@ -1921,17 +1879,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 6,
   },
-  serviceTypeIconWrapActive: {
-    backgroundColor: "#DBEAFE",
-  },
-  serviceTypeText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#64748B",
-  },
-  serviceTypeTextActive: {
-    color: "#2563EB",
-  },
+  serviceTypeIconWrapActive: { backgroundColor: "#DBEAFE" },
+  serviceTypeText: { fontSize: 12, fontWeight: "600", color: "#64748B" },
+  serviceTypeTextActive: { color: "#2563EB" },
 
   // Pickup/Drop detail sub-cards
   serviceDetailBlock: {
@@ -1968,24 +1918,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     gap: 8,
   },
-  iconInput: {
-    flex: 1,
-    fontSize: 14,
-    color: "#1E293B",
-    paddingVertical: 11,
-  },
-  currencyPrefix: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#64748B",
-  },
+  iconInput: { flex: 1, fontSize: 14, color: "#1E293B", paddingVertical: 11 },
+  currencyPrefix: { fontSize: 14, fontWeight: "700", color: "#64748B" },
 
-  // Map location row with open-in-maps button
-  mapInputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
+  // Map link row
+  mapInputRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   mapOpenButton: {
     width: 44,
     height: 44,
@@ -1998,7 +1935,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
 
-  // ── Live "No. of Days" summary box ──
+  // Trip duration box
   durationSummaryBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -2011,38 +1948,19 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     marginBottom: 14,
   },
-  durationSummaryLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  durationSummaryLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#1E293B",
-  },
+  durationSummaryLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
+  durationSummaryLabel: { fontSize: 13, fontWeight: "600", color: "#1E293B" },
   durationSummaryPill: {
     backgroundColor: "#2563EB",
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 5,
   },
-  durationSummaryValue: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#FFFFFF",
-  },
+  durationSummaryValue: { fontSize: 13, fontWeight: "800", color: "#FFFFFF" },
 
-  // ── Bill Summary / Invoice (Zomato-style) ──
-  billSummaryHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  billSummarySubtext: {
-    fontSize: 12,
-    color: "#94A3B8",
-    marginTop: -8,
-  },
+  // Bill Summary
+  billSummaryHeaderRow: { flexDirection: "row", alignItems: "center" },
+  billSummarySubtext: { fontSize: 12, color: "#94A3B8", marginTop: -8 },
   billSummaryHeaderAmount: {
     fontSize: 16,
     fontWeight: "800",
@@ -2061,52 +1979,20 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     gap: 12,
   },
-  invoiceLabel: {
-    flex: 1,
-    fontSize: 13,
-    color: "#475569",
-  },
-  invoiceValue: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#1E293B",
-  },
+  invoiceLabel: { flex: 1, fontSize: 13, color: "#475569" },
+  invoiceValue: { fontSize: 13, fontWeight: "600", color: "#1E293B" },
   invoiceDivider: {
     borderStyle: "dashed",
     borderWidth: 0.75,
     borderColor: "#CBD5E1",
     marginVertical: 8,
   },
-  invoiceTotalLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#334155",
-  },
-  invoiceTotalValue: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#334155",
-  },
-  invoiceGrandLabel: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#0F172A",
-  },
-  invoiceGrandValue: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#16A34A",
-  },
-  invoiceBalanceLabel: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#B45309",
-  },
-  invoiceBalanceValue: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: "#B45309",
-  },
+  invoiceTotalLabel: { fontSize: 13, fontWeight: "700", color: "#334155" },
+  invoiceTotalValue: { fontSize: 13, fontWeight: "700", color: "#334155" },
+  invoiceGrandLabel: { fontSize: 15, fontWeight: "800", color: "#0F172A" },
+  invoiceGrandValue: { fontSize: 16, fontWeight: "800", color: "#16A34A" },
+  invoiceBalanceLabel: { fontSize: 14, fontWeight: "700", color: "#B45309" },
+  invoiceBalanceValue: { fontSize: 14, fontWeight: "800", color: "#B45309" },
   billSummaryCloseButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -2115,9 +2001,5 @@ const styles = StyleSheet.create({
     marginTop: 6,
     paddingVertical: 8,
   },
-  billSummaryCloseText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#2563EB",
-  },
+  billSummaryCloseText: { fontSize: 13, fontWeight: "700", color: "#2563EB" },
 });

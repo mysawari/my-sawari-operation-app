@@ -1,10 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter, useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { quickActions } from "../../../constants/homeData";
-import colors from "../../../theme/colors";
-import { useCallback, useState } from "react";
 import api from "../../../services/api";
+import colors from "../../../theme/colors";
 
 export default function QuickActions() {
   const router = useRouter();
@@ -13,14 +13,21 @@ export default function QuickActions() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      api.get("/extensions").then((res) => {
-        if (active && res.data?.success) {
-          const pendingCount = res.data.data.filter(ext => ext.status === "pending").length;
-          setPendingExtensions(pendingCount);
-        }
-      }).catch(console.warn);
-      return () => { active = false; };
-    }, [])
+      api
+        .get("/extensions")
+        .then((res) => {
+          if (active && res.data?.success) {
+            const pendingCount = res.data.data.filter(
+              (ext) => ext.status === "pending",
+            ).length;
+            setPendingExtensions(pendingCount);
+          }
+        })
+        .catch(console.warn);
+      return () => {
+        active = false;
+      };
+    }, []),
   );
 
   return (
@@ -30,7 +37,10 @@ export default function QuickActions() {
       <View style={styles.grid}>
         {quickActions.map((item) => {
           const Icon = item.icon;
-          const badgeCount = item.title === "Extension Requests" ? pendingExtensions : item.badge;
+          const badgeCount =
+            item.title === "Extension Requests"
+              ? pendingExtensions
+              : item.badge;
 
           return (
             <TouchableOpacity
@@ -47,7 +57,7 @@ export default function QuickActions() {
                 <Text style={styles.title}>{item.title}</Text>
                 <Text style={styles.subtitle}>{item.subtitle}</Text>
               </View>
-              
+
               {badgeCount > 0 && (
                 <View style={styles.badgeWrap}>
                   <Text style={styles.badgeText}>{badgeCount}</Text>

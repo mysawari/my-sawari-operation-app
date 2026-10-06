@@ -17,6 +17,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.operation.mysawari",
+      "versionCode": 1,
       "googleServicesFile": "./google-services.json"
     },
     "web": {
@@ -45,9 +46,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "01acbee1-29e5-4114-ade3-671c2f0d5e4f"
+        "projectId": "d9c136cd-9db7-49f1-82cb-9a6050a1c8f4"
       }
     },
-    "owner": "anisul17"
+    "owner": "masudalom"
   }
 }

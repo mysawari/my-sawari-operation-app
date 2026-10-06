@@ -13,7 +13,6 @@ import {
   Modal,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -22,25 +21,38 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import api from "../../services/api";
 import useAuthStore from "../../store/authStore";
 
 // Must match the maxlength on the backend model / controller.
 const DISPLAY_NAME_MAX_LENGTH = 100;
+const MAX_IMAGES = 5;
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 
-// Shared options for both camera and gallery.
-// `mediaTypes: ["images"]` replaces the deprecated
-// `ImagePicker.MediaTypeOptions.Images`.
+// FREE CROP: allowsEditing opens the crop screen, and leaving out `aspect`
+// lets the user drag the crop box to any size/shape they want.
+// (Android: fully free crop. iOS: the system cropper is always square.)
 const IMAGE_PICKER_OPTIONS = {
   mediaTypes: ["images"],
   allowsEditing: true,
-  aspect: [4, 3],
   quality: 0.8,
 };
 
+// Vehicle Type only applies to the "car" category.
+const CAR_VEHICLE_TYPES = [
+  "SUV",
+  "Sedan",
+  "Hatchback",
+  "Luxury",
+  "Tempo Traveller",
+  "Mini Bus",
+  "Bus",
+];
+
+// ── REUSABLE SUB-COMPONENTS ──
 const InputField = ({
   label,
   placeholder,
@@ -51,6 +63,8 @@ const InputField = ({
   value,
   onChangeText,
   maxLength,
+  keyboardType = "default",
+  autoCapitalize = "sentences",
 }) => (
   <View style={[styles.inputContainer, fullWidth && { width: "100%" }]}>
     <Text style={styles.label}>
@@ -65,7 +79,6 @@ const InputField = ({
         color="#64748B"
         style={{ marginTop: multiline ? 4 : 0 }}
       />
-
       <TextInput
         placeholder={placeholder}
         placeholderTextColor="#94A3B8"
@@ -73,6 +86,8 @@ const InputField = ({
         multiline={multiline}
         value={value}
         onChangeText={onChangeText}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize}
         maxLength={maxLength ?? (multiline ? 200 : undefined)}
       />
     </View>
@@ -99,8 +114,12 @@ const PickerField = ({
         style={Platform.OS === "ios" ? undefined : { color: "#111827" }}
         dropdownIconColor="#64748B"
       >
-        {options.map((item, index) => (
-          <Picker.Item key={index} label={item.label} value={item.value} />
+        {options.map((item) => (
+          <Picker.Item
+            key={item.value || "empty"}
+            label={item.label}
+            value={item.value}
+          />
         ))}
       </Picker>
     </View>
@@ -123,7 +142,6 @@ const DateField = ({
 
     <TouchableOpacity style={styles.inputBox} onPress={onPress}>
       <Ionicons name={icon} size={18} color="#64748B" />
-
       <Text style={[styles.placeholder, value ? { color: "#111827" } : null]}>
         {value || placeholder}
       </Text>
@@ -138,23 +156,12 @@ const SectionTitle = ({ title }) => (
   </View>
 );
 
-// Vehicle Type only applies to the "car" category. Kept as a constant so
-// both the Picker options and the backend-mirrored validation logic below
-// stay in sync with what the server actually accepts.
-const CAR_VEHICLE_TYPES = [
-  "SUV",
-  "Sedan",
-  "Hatchback",
-  "Luxury",
-  "Tempo Traveller",
-  "Mini Bus",
-  "Bus",
-];
-
+// ── MAIN SCREEN ──
 export default function EditVehicleScreen() {
   const router = useRouter();
   const { vehicleId } = useLocalSearchParams();
-  const { token, user } = useAuthStore();
+  const token = useAuthStore((state) => state.token);
+  const user = useAuthStore((state) => state.user);
 
   const [loading, setLoading] = useState(false);
 
@@ -177,9 +184,6 @@ export default function EditVehicleScreen() {
   const [vehicleStatus, setVehicleStatus] = useState("available");
   const [pricePerDay, setPricePerDay] = useState("");
 
-  // Vehicle Type is a car-only concept on the backend. Whenever category
-  // isn't "car" (e.g. "bike", or unset), treat vehicleType as not required
-  // and never send it - this mirrors the server's own validation rule.
   const isCarCategory = category === "car";
 
   // Dates
@@ -191,8 +195,8 @@ export default function EditVehicleScreen() {
   const [showPicker, setShowPicker] = useState(false);
   const [selectedDateField, setSelectedDateField] = useState("");
 
-  // Images
-  const [images, setImages] = useState([null, null, null, null, null]);
+  // Images: each slot is null or { uri, name, type, isExisting }
+  const [images, setImages] = useState(Array(MAX_IMAGES).fill(null));
 
   // Image source sheet (camera / gallery) - holds the slot index, or null.
   const [imageSheetIndex, setImageSheetIndex] = useState(null);
@@ -211,12 +215,11 @@ export default function EditVehicleScreen() {
       setLoading(true);
 
       const res = await api.get(`/vehicles/${vehicleId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
-      const vehicle = res.data.data;
+      const vehicle = res?.data?.data;
+      if (!vehicle) throw new Error("Vehicle not found");
 
       setVehicleName(vehicle.vehicleName || "");
       setDisplayName(vehicle.displayName || "");
@@ -224,19 +227,18 @@ export default function EditVehicleScreen() {
       setManufacturer(vehicle.manufacturer || "");
       setModel(vehicle.model || "");
       setVariant(vehicle.variant || "");
-      setPricePerDay(vehicle.pricePerDay?.toString() || "");
-
-      // OPTIONAL CATEGORY
+      setPricePerDay(
+        vehicle.pricePerDay != null ? String(vehicle.pricePerDay) : "",
+      );
       setCategory(vehicle.category || "");
-
-      // Only hydrate vehicleType when the vehicle is actually a car.
       setVehicleType(
         vehicle.category === "car" ? vehicle.vehicleType || "" : "",
       );
-
       setFuelType(vehicle.fuelType || "");
       setTransmission(vehicle.transmission || "");
-      setSeatingCapacity(vehicle.seatingCapacity?.toString() || "");
+      setSeatingCapacity(
+        vehicle.seatingCapacity != null ? String(vehicle.seatingCapacity) : "",
+      );
       setColor(vehicle.color || "");
       setChassisNumber(vehicle.chassisNumber || "");
       setEngineNumber(vehicle.engineNumber || "");
@@ -246,42 +248,39 @@ export default function EditVehicleScreen() {
       setRegDate(
         vehicle.registrationDate ? new Date(vehicle.registrationDate) : null,
       );
-
       setInsuranceDate(
         vehicle.insuranceValidUpto
           ? new Date(vehicle.insuranceValidUpto)
           : null,
       );
-
       setPucDate(vehicle.pucValidUpto ? new Date(vehicle.pucValidUpto) : null);
-
       setFitnessDate(
         vehicle.fitnessValidUpto ? new Date(vehicle.fitnessValidUpto) : null,
       );
 
-      if (vehicle.images && vehicle.images.length > 0) {
-        const incomingImages = vehicle.images.map((img) => img.url || img);
+      if (Array.isArray(vehicle.images) && vehicle.images.length > 0) {
+        const incoming = vehicle.images
+          .map((img) => (typeof img === "string" ? img : img?.url))
+          .filter(Boolean)
+          .map((url) => ({ uri: url, isExisting: true }));
 
-        const completeSlots = [...incomingImages, ...Array(5).fill(null)].slice(
-          0,
-          5,
+        setImages(
+          [...incoming, ...Array(MAX_IMAGES).fill(null)].slice(0, MAX_IMAGES),
         );
-
-        setImages(completeSlots);
       }
     } catch (error) {
-      console.log("FETCH ERROR DETAILS:", error?.response?.data?.message || error?.message);
-
+      console.log(
+        "FETCH ERROR DETAILS:",
+        error?.response?.data?.message || error?.message,
+      );
       Alert.alert("Error", "Failed to fetch vehicle details.");
     } finally {
       setLoading(false);
     }
   };
 
-  const formatDate = (date) => {
-    if (!date) return "";
-    return date.toLocaleDateString("en-IN");
-  };
+  // ── DATES ──
+  const formatDate = (date) => (date ? date.toLocaleDateString("en-IN") : "");
 
   const openDatePicker = (field) => {
     setSelectedDateField(field);
@@ -290,26 +289,21 @@ export default function EditVehicleScreen() {
 
   const onDateChange = (event, selectedDate) => {
     setShowPicker(false);
-
-    if (!selectedDate) return;
+    if (event?.type === "dismissed" || !selectedDate) return;
 
     switch (selectedDateField) {
       case "reg":
         setRegDate(selectedDate);
         break;
-
       case "insurance":
         setInsuranceDate(selectedDate);
         break;
-
       case "puc":
         setPucDate(selectedDate);
         break;
-
       case "fitness":
         setFitnessDate(selectedDate);
         break;
-
       default:
         break;
     }
@@ -319,32 +313,32 @@ export default function EditVehicleScreen() {
     switch (selectedDateField) {
       case "reg":
         return regDate || new Date();
-
       case "insurance":
         return insuranceDate || new Date();
-
       case "puc":
         return pucDate || new Date();
-
       case "fitness":
         return fitnessDate || new Date();
-
       default:
         return new Date();
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // IMAGES
-  // ---------------------------------------------------------------------------
-
-  const setImageAt = (index, uri) => {
+  // ── IMAGES ──
+  const setImageAt = (index, value) => {
     setImages((prev) => {
       const updated = [...prev];
-      updated[index] = uri;
+      updated[index] = value;
       return updated;
     });
   };
+
+  const assetToImage = (asset, index) => ({
+    uri: asset.uri,
+    name: asset.fileName || `vehicle-${Date.now()}-${index}.jpg`,
+    type: asset.mimeType || "image/jpeg",
+    isExisting: false,
+  });
 
   // Empty slot -> choose source. Filled slot -> open full preview.
   const handleImageSlotPress = (index) => {
@@ -360,16 +354,13 @@ export default function EditVehicleScreen() {
   const runAfterSheetCloses = (action) => {
     const index = imageSheetIndex;
     setImageSheetIndex(null);
-
     if (index === null) return;
-
     setTimeout(() => action(index), Platform.OS === "ios" ? 450 : 150);
   };
 
   const takePhoto = async (index) => {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
-
       if (status !== "granted") {
         Alert.alert(
           "Camera Permission Needed",
@@ -379,9 +370,8 @@ export default function EditVehicleScreen() {
       }
 
       const result = await ImagePicker.launchCameraAsync(IMAGE_PICKER_OPTIONS);
-
       if (!result.canceled && result.assets?.length) {
-        setImageAt(index, result.assets[0].uri);
+        setImageAt(index, assetToImage(result.assets[0], index));
       }
     } catch (error) {
       console.log("CAMERA ERROR:", error?.message);
@@ -391,11 +381,20 @@ export default function EditVehicleScreen() {
 
   const pickFromGallery = async (index) => {
     try {
+      const { status } =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission Needed",
+          "Allow photo access in your device settings to choose vehicle photos.",
+        );
+        return;
+      }
+
       const result =
         await ImagePicker.launchImageLibraryAsync(IMAGE_PICKER_OPTIONS);
-
       if (!result.canceled && result.assets?.length) {
-        setImageAt(index, result.assets[0].uri);
+        setImageAt(index, assetToImage(result.assets[0], index));
       }
     } catch (error) {
       console.log("GALLERY ERROR:", error?.message);
@@ -405,7 +404,7 @@ export default function EditVehicleScreen() {
 
   // Indexes of slots that currently hold an image (for preview navigation).
   const filledImageIndexes = images
-    .map((uri, i) => (uri ? i : null))
+    .map((img, i) => (img ? i : null))
     .filter((i) => i !== null);
 
   const previewPosition =
@@ -426,13 +425,11 @@ export default function EditVehicleScreen() {
   const replacePreviewImage = () => {
     const index = previewIndex;
     setPreviewIndex(null);
-
     setTimeout(() => setImageSheetIndex(index), 300);
   };
 
   const removePreviewImage = () => {
     const index = previewIndex;
-
     Alert.alert("Remove Photo", "Remove this photo from the vehicle?", [
       { text: "Cancel", style: "cancel" },
       {
@@ -446,111 +443,101 @@ export default function EditVehicleScreen() {
     ]);
   };
 
-  // Switching away from "car" clears any previously-selected car body type
-  // so stale state can never get sent to the backend for a bike.
+  // ── CATEGORY ──
   const handleCategoryChange = (value) => {
     setCategory(value);
-
-    if (value !== "car") {
-      setVehicleType("");
-    }
+    if (value !== "car") setVehicleType("");
   };
 
+  // ── UPDATE ──
   const handleUpdateVehicle = async () => {
+    if (
+      !vehicleName.trim() ||
+      !vehicleNumber.trim() ||
+      !manufacturer ||
+      !fuelType ||
+      !transmission ||
+      !seatingCapacity.trim()
+    ) {
+      Alert.alert("Validation Error", "Please fill all required fields.");
+      return;
+    }
+
+    if (isNaN(Number(seatingCapacity)) || Number(seatingCapacity) <= 0) {
+      Alert.alert(
+        "Validation Error",
+        "Seating capacity must be a valid number.",
+      );
+      return;
+    }
+
+    if (pricePerDay && isNaN(Number(pricePerDay))) {
+      Alert.alert("Validation Error", "Price per day must be a valid number.");
+      return;
+    }
+
+    if (displayName.trim().length > DISPLAY_NAME_MAX_LENGTH) {
+      Alert.alert(
+        "Validation Error",
+        `Display name cannot exceed ${DISPLAY_NAME_MAX_LENGTH} characters.`,
+      );
+      return;
+    }
+
+    if (isCarCategory && !vehicleType) {
+      Alert.alert(
+        "Validation Error",
+        "Please select a Vehicle Type for this car.",
+      );
+      return;
+    }
+
     try {
-      if (
-        !vehicleName ||
-        !vehicleNumber ||
-        !manufacturer ||
-        !fuelType ||
-        !transmission ||
-        !seatingCapacity
-      ) {
-        Alert.alert(
-          "Validation Error",
-          "Please complete all mandatory parameters highlighted.",
-        );
-
-        return;
-      }
-
-      if (displayName.trim().length > DISPLAY_NAME_MAX_LENGTH) {
-        Alert.alert(
-          "Validation Error",
-          `Display name cannot exceed ${DISPLAY_NAME_MAX_LENGTH} characters.`,
-        );
-
-        return;
-      }
-
-      // Vehicle Type is only mandatory for cars.
-      if (isCarCategory && !vehicleType) {
-        Alert.alert(
-          "Validation Error",
-          "Please select a Vehicle Type for this car.",
-        );
-
-        return;
-      }
-
       setLoading(true);
 
       const formData = new FormData();
-
-      formData.append("vehicleName", vehicleName);
+      formData.append("vehicleName", vehicleName.trim());
       // Always sent (even empty) so employees can clear a display name.
       formData.append("displayName", displayName.trim());
-      formData.append("vehicleNumber", vehicleNumber.toUpperCase());
+      formData.append(
+        "vehicleNumber",
+        vehicleNumber.trim().toUpperCase().replace(/\s+/g, ""),
+      );
       formData.append("manufacturer", manufacturer);
-      formData.append("model", model || "");
-      formData.append("variant", variant || "");
-      formData.append("pricePerDay", pricePerDay || "0");
+      formData.append("model", model.trim());
+      formData.append("variant", variant.trim());
+      formData.append(
+        "pricePerDay",
+        pricePerDay ? String(Number(pricePerDay)) : "0",
+      );
 
-      // OPTIONAL CATEGORY
-      if (category) {
-        formData.append("category", category);
-      }
-
-      // Only send vehicleType for cars.
-      if (isCarCategory) {
-        formData.append("vehicleType", vehicleType);
-      }
+      if (category) formData.append("category", category);
+      if (isCarCategory) formData.append("vehicleType", vehicleType);
 
       formData.append("fuelType", fuelType);
       formData.append("transmission", transmission);
-      formData.append("seatingCapacity", seatingCapacity.toString());
-      formData.append("color", color || "");
-      formData.append("chassisNumber", chassisNumber || "");
-      formData.append("engineNumber", engineNumber || "");
-      formData.append("notes", notes || "");
+      formData.append("seatingCapacity", String(Number(seatingCapacity)));
+      formData.append("color", color);
+      formData.append("chassisNumber", chassisNumber.trim());
+      formData.append("engineNumber", engineNumber.trim());
+      formData.append("notes", notes.trim());
       formData.append("status", vehicleStatus);
 
-      if (regDate) {
-        formData.append("registrationDate", regDate.toISOString());
-      }
-
-      if (insuranceDate) {
+      if (regDate) formData.append("registrationDate", regDate.toISOString());
+      if (insuranceDate)
         formData.append("insuranceValidUpto", insuranceDate.toISOString());
-      }
-
-      if (pucDate) {
-        formData.append("pucValidUpto", pucDate.toISOString());
-      }
-
-      if (fitnessDate) {
+      if (pucDate) formData.append("pucValidUpto", pucDate.toISOString());
+      if (fitnessDate)
         formData.append("fitnessValidUpto", fitnessDate.toISOString());
-      }
 
-      images.filter(Boolean).forEach((uri, index) => {
-        if (uri.startsWith("http")) {
-          formData.append("existingImages", uri);
+      images.filter(Boolean).forEach((img) => {
+        if (img.isExisting) {
+          formData.append("existingImages", img.uri);
         } else {
-          const filename = uri.split("/").pop() || `vehicle-${index}.jpg`;
-
           formData.append("images", {
-            uri,
-            name: filename,
-            type: "image/jpeg",
+            uri: img.uri,
+            name: img.name,
+            type: img.type,
           });
         }
       });
@@ -563,23 +550,25 @@ export default function EditVehicleScreen() {
       });
 
       Alert.alert("Success", "Vehicle updated successfully.");
-
       router.back();
     } catch (error) {
-      console.log("UPDATE ERROR:", error?.response?.data?.message || error?.message);
-
+      console.log(
+        "UPDATE ERROR:",
+        error?.response?.data?.message || error?.message,
+      );
       Alert.alert(
         "Update Failed",
-        error.response?.data?.message || "Failed to update vehicle.",
+        error?.response?.data?.message || "Failed to update vehicle.",
       );
     } finally {
       setLoading(false);
     }
   };
 
+  // ── UI ──
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#001B45" />
+    <SafeAreaView style={styles.container} edges={["bottom"]}>
+      <StatusBar barStyle="light-content" backgroundColor="#0A1628" />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -596,14 +585,13 @@ export default function EditVehicleScreen() {
 
             <View style={styles.headerCenter}>
               <Text style={styles.headerTitle}>Edit Vehicle</Text>
-
               <Text style={styles.headerSub}>
                 Modify fleet vehicle parameters
               </Text>
             </View>
 
             <TouchableOpacity
-              style={styles.saveTopBtn}
+              style={[styles.saveTopBtn, loading && { opacity: 0.6 }]}
               onPress={handleUpdateVehicle}
               disabled={loading}
             >
@@ -614,9 +602,8 @@ export default function EditVehicleScreen() {
 
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{
-            paddingBottom: 40,
-          }}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingBottom: 40 }}
         >
           <View style={styles.formCard}>
             <SectionTitle title="Vehicle Information" />
@@ -630,12 +617,12 @@ export default function EditVehicleScreen() {
                 value={vehicleName}
                 onChangeText={setVehicleName}
               />
-
               <InputField
                 label="Vehicle Number"
                 placeholder="Enter vehicle number"
                 icon="reader-outline"
                 required
+                autoCapitalize="characters"
                 value={vehicleNumber}
                 onChangeText={setVehicleNumber}
               />
@@ -654,19 +641,14 @@ export default function EditVehicleScreen() {
             <View style={styles.row}>
               <PickerField
                 label="Manufacturer"
+                required
                 selectedValue={manufacturer}
                 onValueChange={setManufacturer}
                 options={[
-                  {
-                    label: "Select Manufacturer",
-                    value: "",
-                  },
+                  { label: "Select Manufacturer", value: "" },
                   { label: "Toyota", value: "Toyota" },
                   { label: "Mahindra", value: "Mahindra" },
-                  {
-                    label: "Maruti Suzuki",
-                    value: "Maruti Suzuki",
-                  },
+                  { label: "Maruti Suzuki", value: "Maruti Suzuki" },
                   { label: "Hyundai", value: "Hyundai" },
                   { label: "Tata", value: "Tata" },
                   { label: "Kia", value: "Kia" },
@@ -675,26 +657,16 @@ export default function EditVehicleScreen() {
                   { label: "Renault", value: "Renault" },
                   { label: "Nissan", value: "Nissan" },
                   { label: "Skoda", value: "Skoda" },
-                  {
-                    label: "Volkswagen",
-                    value: "Volkswagen",
-                  },
+                  { label: "Volkswagen", value: "Volkswagen" },
                   { label: "Jeep", value: "Jeep" },
-                  {
-                    label: "Force Motors",
-                    value: "Force Motors",
-                  },
+                  { label: "Force Motors", value: "Force Motors" },
                   { label: "Isuzu", value: "Isuzu" },
                   { label: "Citroen", value: "Citroen" },
                   { label: "BYD", value: "BYD" },
                   { label: "BMW", value: "BMW" },
-                  {
-                    label: "Mercedes-Benz",
-                    value: "Mercedes-Benz",
-                  },
+                  { label: "Mercedes-Benz", value: "Mercedes-Benz" },
                 ]}
               />
-
               <InputField
                 label="Model"
                 placeholder="Enter model"
@@ -712,13 +684,13 @@ export default function EditVehicleScreen() {
                 value={variant}
                 onChangeText={setVariant}
               />
-
               <InputField
                 label="Price Per Day"
                 placeholder="Enter price per day"
                 icon="cash-outline"
+                keyboardType="decimal-pad"
                 value={pricePerDay}
-                onChangeText={setPricePerDay}
+                onChangeText={(t) => setPricePerDay(t.replace(/[^0-9.]/g, ""))}
               />
             </View>
 
@@ -729,32 +701,20 @@ export default function EditVehicleScreen() {
                 selectedValue={category}
                 onValueChange={handleCategoryChange}
                 options={[
-                  {
-                    label: "Select category",
-                    value: "",
-                  },
-                  {
-                    label: "Bike",
-                    value: "bike",
-                  },
-                  {
-                    label: "Car",
-                    value: "car",
-                  },
+                  { label: "Select category", value: "" },
+                  { label: "Bike", value: "bike" },
+                  { label: "Car", value: "car" },
                 ]}
               />
 
               {isCarCategory ? (
                 <PickerField
                   label="Vehicle Type"
+                  required
                   selectedValue={vehicleType}
                   onValueChange={setVehicleType}
-                  required
                   options={[
-                    {
-                      label: "Select vehicle type",
-                      value: "",
-                    },
+                    { label: "Select vehicle type", value: "" },
                     ...CAR_VEHICLE_TYPES.map((type) => ({
                       label: type,
                       value: type,
@@ -771,7 +731,9 @@ export default function EditVehicleScreen() {
                       color="#64748B"
                     />
                     <Text style={styles.noticeText}>
-                      Not applicable for bikes
+                      {category
+                        ? "Not applicable for bikes"
+                        : "Select category first"}
                     </Text>
                   </View>
                 </View>
@@ -781,55 +743,27 @@ export default function EditVehicleScreen() {
             <View style={styles.row}>
               <PickerField
                 label="Fuel Type"
+                required
                 selectedValue={fuelType}
                 onValueChange={setFuelType}
-                required
                 options={[
-                  {
-                    label: "Select fuel type",
-                    value: "",
-                  },
-                  {
-                    label: "Petrol",
-                    value: "Petrol",
-                  },
-                  {
-                    label: "Diesel",
-                    value: "Diesel",
-                  },
-                  {
-                    label: "Electric",
-                    value: "Electric",
-                  },
-                  {
-                    label: "CNG",
-                    value: "CNG",
-                  },
-                  {
-                    label: "Hybrid",
-                    value: "Hybrid",
-                  },
+                  { label: "Select fuel type", value: "" },
+                  { label: "Petrol", value: "Petrol" },
+                  { label: "Diesel", value: "Diesel" },
+                  { label: "Electric", value: "Electric" },
+                  { label: "CNG", value: "CNG" },
+                  { label: "Hybrid", value: "Hybrid" },
                 ]}
               />
-
               <PickerField
                 label="Transmission"
+                required
                 selectedValue={transmission}
                 onValueChange={setTransmission}
-                required
                 options={[
-                  {
-                    label: "Select transmission",
-                    value: "",
-                  },
-                  {
-                    label: "Manual",
-                    value: "Manual",
-                  },
-                  {
-                    label: "Automatic",
-                    value: "Automatic",
-                  },
+                  { label: "Select transmission", value: "" },
+                  { label: "Manual", value: "Manual" },
+                  { label: "Automatic", value: "Automatic" },
                 ]}
               />
             </View>
@@ -840,22 +774,24 @@ export default function EditVehicleScreen() {
                 placeholder="Enter seating capacity"
                 icon="people-outline"
                 required
+                keyboardType="number-pad"
                 value={seatingCapacity}
-                onChangeText={setSeatingCapacity}
+                onChangeText={(t) =>
+                  setSeatingCapacity(t.replace(/[^0-9]/g, ""))
+                }
               />
-
               <PickerField
                 label="Color"
                 selectedValue={color}
                 onValueChange={setColor}
                 options={[
-                  {
-                    label: "Select color",
-                    value: "",
-                  },
+                  { label: "Select color", value: "" },
                   { label: "White", value: "White" },
                   { label: "Black", value: "Black" },
                   { label: "Silver", value: "Silver" },
+                  { label: "Blue", value: "Blue" },
+                  { label: "Red", value: "Red" },
+                  { label: "Grey", value: "Grey" },
                 ]}
               />
             </View>
@@ -865,6 +801,7 @@ export default function EditVehicleScreen() {
               placeholder="Enter chassis number"
               icon="card-outline"
               fullWidth
+              autoCapitalize="characters"
               value={chassisNumber}
               onChangeText={setChassisNumber}
             />
@@ -874,6 +811,7 @@ export default function EditVehicleScreen() {
               placeholder="Enter engine number"
               icon="build-outline"
               fullWidth
+              autoCapitalize="characters"
               value={engineNumber}
               onChangeText={setEngineNumber}
             />
@@ -881,8 +819,8 @@ export default function EditVehicleScreen() {
             <SectionTitle title="Vehicle Images" />
 
             <Text style={styles.imageHint}>
-              Tap an empty slot to take or choose a photo. Tap a photo to view,
-              replace, or remove it.
+              Tap an empty slot to take or choose a photo, then crop it any way
+              you like. Tap a photo to view, replace, or remove it.
             </Text>
 
             <View style={styles.imageRow}>
@@ -895,10 +833,17 @@ export default function EditVehicleScreen() {
                 >
                   {img ? (
                     <>
-                      <Image source={{ uri: img }} style={styles.preview} />
-
+                      <Image
+                        source={{ uri: img.uri }}
+                        style={styles.preview}
+                        resizeMode="cover"
+                      />
                       <View style={styles.expandBadge}>
-                        <Ionicons name="expand-outline" size={10} color="white" />
+                        <Ionicons
+                          name="expand-outline"
+                          size={10}
+                          color="white"
+                        />
                       </View>
                     </>
                   ) : (
@@ -908,7 +853,6 @@ export default function EditVehicleScreen() {
                         size={22}
                         color="#94A3B8"
                       />
-
                       <Text style={styles.addPhoto}>Add Photo</Text>
                     </>
                   )}
@@ -926,7 +870,6 @@ export default function EditVehicleScreen() {
                 value={formatDate(regDate)}
                 onPress={() => openDatePicker("reg")}
               />
-
               <DateField
                 label="Insurance Valid Upto"
                 placeholder="Select date"
@@ -944,7 +887,6 @@ export default function EditVehicleScreen() {
                 value={formatDate(pucDate)}
                 onPress={() => openDatePicker("puc")}
               />
-
               <DateField
                 label="Fitness Valid Upto"
                 placeholder="Select date"
@@ -963,14 +905,12 @@ export default function EditVehicleScreen() {
               value={notes}
               onChangeText={setNotes}
             />
-
             <Text style={styles.counter}>{notes.length}/200</Text>
 
             <SectionTitle title="Status" />
 
             <Text style={styles.label}>
-              Vehicle Status
-              <Text style={styles.required}> *</Text>
+              Vehicle Status<Text style={styles.required}> *</Text>
             </Text>
 
             {user?.role === "SUPER_ADMIN" ? (
@@ -997,51 +937,35 @@ export default function EditVehicleScreen() {
                     active: styles.activeService,
                     color: "#EF4444",
                   },
-                ].map((item) => (
-                  <TouchableOpacity
-                    key={item.value}
-                    style={[
-                      styles.statusCard,
-                      vehicleStatus === item.value && item.active,
-                    ]}
-                    onPress={() => setVehicleStatus(item.value)}
-                  >
-                    <View
-                      style={[
-                        styles.radio,
-                        {
-                          borderColor: item.color,
-                        },
-                      ]}
-                    />
-
-                    <View>
-                      <Text style={styles.statusTitle}>{item.title}</Text>
-
-                      <Text style={styles.statusSub}>{item.sub}</Text>
-                    </View>
-                  </TouchableOpacity>
-                ))}
+                ].map((item) => {
+                  const isActive = vehicleStatus === item.value;
+                  return (
+                    <TouchableOpacity
+                      key={item.value}
+                      style={[styles.statusCard, isActive && item.active]}
+                      onPress={() => setVehicleStatus(item.value)}
+                    >
+                      <View style={[styles.radio, { borderColor: item.color }]}>
+                        {isActive && (
+                          <View
+                            style={[
+                              styles.radioDot,
+                              { backgroundColor: item.color },
+                            ]}
+                          />
+                        )}
+                      </View>
+                      <View>
+                        <Text style={styles.statusTitle}>{item.title}</Text>
+                        <Text style={styles.statusSub}>{item.sub}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             ) : (
-              <View
-                style={{
-                  backgroundColor: "#FEF3C7",
-                  borderWidth: 1,
-                  borderColor: "#FCD34D",
-                  borderRadius: 12,
-                  padding: 14,
-                  marginTop: 8,
-                }}
-              >
-                <Text
-                  style={{
-                    color: "#92400E",
-                    fontSize: 14,
-                    fontWeight: "600",
-                    textAlign: "center",
-                  }}
-                >
+              <View style={styles.lockedBox}>
+                <Text style={styles.lockedText}>
                   Only Super Admin can change vehicle status. Please contact
                   your administrator.
                 </Text>
@@ -1074,8 +998,7 @@ export default function EditVehicleScreen() {
             value={getPickerDate()}
             mode="date"
             display={Platform.OS === "ios" ? "spinner" : "default"}
-            onValueChange={onDateChange}
-            onDismiss={() => onDateChange({type: "dismissed"})}
+            onChange={onDateChange}
           />
         )}
       </KeyboardAvoidingView>
@@ -1124,7 +1047,9 @@ export default function EditVehicleScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.sheetOptionTitle}>Choose from gallery</Text>
-                <Text style={styles.sheetOptionSub}>Pick an existing photo</Text>
+                <Text style={styles.sheetOptionSub}>
+                  Pick an existing photo
+                </Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
             </TouchableOpacity>
@@ -1167,7 +1092,7 @@ export default function EditVehicleScreen() {
           <View style={styles.previewImageWrap}>
             {previewIndex !== null && images[previewIndex] && (
               <Image
-                source={{ uri: images[previewIndex] }}
+                source={{ uri: images[previewIndex].uri }}
                 style={styles.previewImage}
                 resizeMode="contain"
               />
@@ -1218,10 +1143,7 @@ export default function EditVehicleScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F8FAFC",
-  },
+  container: { flex: 1, backgroundColor: "#F8FAFC" },
   header: {
     paddingTop: Platform.OS === "android" ? 50 : 20,
     paddingBottom: 20,
@@ -1242,21 +1164,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  headerCenter: {
-    flex: 1,
-    alignItems: "center",
-    paddingHorizontal: 12,
-  },
-  headerTitle: {
-    color: "white",
-    fontSize: 20,
-    fontWeight: "800",
-  },
-  headerSub: {
-    color: "rgba(255,255,255,0.55)",
-    fontSize: 12,
-    marginTop: 2,
-  },
+  headerCenter: { flex: 1, alignItems: "center", paddingHorizontal: 12 },
+  headerTitle: { color: "white", fontSize: 20, fontWeight: "800" },
+  headerSub: { color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 2 },
   saveTopBtn: {
     width: 42,
     height: 42,
@@ -1275,15 +1185,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 10,
   },
-  sectionHeader: {
-    marginBottom: 16,
-    marginTop: 10,
-  },
-  sectionTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: "#111827",
-  },
+  sectionHeader: { marginBottom: 16, marginTop: 10 },
+  sectionTitle: { fontSize: 22, fontWeight: "800", color: "#111827" },
   yellowLine: {
     width: 38,
     height: 4,
@@ -1291,24 +1194,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginTop: 8,
   },
-  row: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  inputContainer: {
-    flex: 1,
-    marginBottom: 16,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#111827",
-    marginBottom: 8,
-  },
-  required: {
-    color: "#EF4444",
-  },
+  row: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  inputContainer: { flex: 1, marginBottom: 16 },
+  label: { fontSize: 14, fontWeight: "700", color: "#111827", marginBottom: 8 },
+  required: { color: "#EF4444" },
   inputBox: {
     height: 56,
     borderWidth: 1,
@@ -1329,48 +1218,11 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     backgroundColor: "white",
   },
-  input: {
-    flex: 1,
-    fontSize: 14,
-    color: "#111827",
-  },
-  placeholder: {
-    color: "#94A3B8",
-    fontSize: 14,
-  },
-  notesBox: {
-    height: 100,
-    alignItems: "flex-start",
-    paddingTop: 14,
-  },
-  notesInput: {
-    textAlignVertical: "top",
-  },
-  counter: {
-    textAlign: "right",
-    color: "#94A3B8",
-    marginBottom: 20,
-  },
-  uploadBox: {
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: "#CBD5E1",
-    borderRadius: 16,
-    alignItems: "center",
-    paddingVertical: 24,
-    marginBottom: 14,
-  },
-  uploadTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#1E3A8A",
-    marginTop: 10,
-  },
-  uploadSub: {
-    fontSize: 13,
-    color: "#64748B",
-    marginTop: 4,
-  },
+  input: { flex: 1, fontSize: 14, color: "#111827" },
+  placeholder: { color: "#94A3B8", fontSize: 14 },
+  notesBox: { height: 100, alignItems: "flex-start", paddingTop: 14 },
+  notesInput: { textAlignVertical: "top", height: "100%" },
+  counter: { textAlign: "right", color: "#94A3B8", marginBottom: 20 },
   imageHint: {
     fontSize: 12,
     color: "#64748B",
@@ -1398,16 +1250,8 @@ const styles = StyleSheet.create({
     borderColor: "#FFC107",
     borderWidth: 1.5,
   },
-  addPhoto: {
-    fontSize: 9,
-    color: "#64748B",
-    marginTop: 4,
-  },
-  preview: {
-    width: "100%",
-    height: "100%",
-    borderRadius: 12,
-  },
+  addPhoto: { fontSize: 9, color: "#64748B", marginTop: 4 },
+  preview: { width: "100%", height: "100%", borderRadius: 12 },
   expandBadge: {
     position: "absolute",
     bottom: 4,
@@ -1430,14 +1274,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  noticeText: {
-    fontSize: 13,
-    color: "#64748B",
-  },
-  statusRow: {
-    gap: 4,
-    marginTop: 6,
-  },
+  noticeText: { fontSize: 13, color: "#64748B", flexShrink: 1 },
+  statusRow: { gap: 4, marginTop: 6 },
   statusCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -1448,39 +1286,35 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 10,
   },
-  activeAvailable: {
-    backgroundColor: "#F0FDF4",
-    borderColor: "#22C55E",
-  },
-  activeRent: {
-    backgroundColor: "#FFFBEB",
-    borderColor: "#F59E0B",
-  },
-  activeService: {
-    backgroundColor: "#FEF2F2",
-    borderColor: "#EF4444",
-  },
+  activeAvailable: { backgroundColor: "#F0FDF4", borderColor: "#22C55E" },
+  activeRent: { backgroundColor: "#FFFBEB", borderColor: "#F59E0B" },
+  activeService: { backgroundColor: "#FEF2F2", borderColor: "#EF4444" },
   radio: {
     width: 22,
     height: 22,
     borderRadius: 11,
     borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  statusTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#111827",
+  radioDot: { width: 10, height: 10, borderRadius: 5 },
+  statusTitle: { fontSize: 15, fontWeight: "700", color: "#111827" },
+  statusSub: { fontSize: 12, color: "#64748B", marginTop: 2 },
+  lockedBox: {
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 8,
   },
-  statusSub: {
-    fontSize: 12,
-    color: "#64748B",
-    marginTop: 2,
+  lockedText: {
+    color: "#92400E",
+    fontSize: 14,
+    fontWeight: "600",
+    textAlign: "center",
   },
-  bottomButtons: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 20,
-  },
+  bottomButtons: { flexDirection: "row", gap: 12, marginTop: 20 },
   cancelBtn: {
     flex: 1,
     height: 56,
@@ -1491,11 +1325,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "white",
   },
-  cancelText: {
-    color: "#0F2554",
-    fontSize: 16,
-    fontWeight: "700",
-  },
+  cancelText: { color: "#0F2554", fontSize: 16, fontWeight: "700" },
   saveBtn: {
     flex: 1,
     height: 56,
@@ -1504,11 +1334,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  saveText: {
-    color: "#111827",
-    fontSize: 16,
-    fontWeight: "800",
-  },
+  saveText: { color: "#111827", fontSize: 16, fontWeight: "800" },
 
   // Image source sheet
   sheetBackdrop: {
@@ -1532,17 +1358,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#E2E8F0",
     marginBottom: 16,
   },
-  sheetTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  sheetSub: {
-    fontSize: 13,
-    color: "#64748B",
-    marginTop: 4,
-    marginBottom: 16,
-  },
+  sheetTitle: { fontSize: 18, fontWeight: "800", color: "#111827" },
+  sheetSub: { fontSize: 13, color: "#64748B", marginTop: 4, marginBottom: 16 },
   sheetOption: {
     flexDirection: "row",
     alignItems: "center",
@@ -1560,16 +1377,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  sheetOptionTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  sheetOptionSub: {
-    fontSize: 12,
-    color: "#64748B",
-    marginTop: 2,
-  },
+  sheetOptionTitle: { fontSize: 15, fontWeight: "700", color: "#111827" },
+  sheetOptionSub: { fontSize: 12, color: "#64748B", marginTop: 2 },
   sheetCancel: {
     height: 52,
     borderRadius: 16,
@@ -1577,17 +1386,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 4,
   },
-  sheetCancelText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#0F2554",
-  },
+  sheetCancelText: { fontSize: 15, fontWeight: "700", color: "#0F2554" },
 
   // Full-screen preview
-  previewContainer: {
-    flex: 1,
-    backgroundColor: "#000",
-  },
+  previewContainer: { flex: 1, backgroundColor: "#000" },
   previewHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -1604,20 +1406,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  previewCounter: {
-    color: "white",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  previewImageWrap: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  previewImage: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT * 0.65,
-  },
+  previewCounter: { color: "white", fontSize: 15, fontWeight: "700" },
+  previewImageWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
+  previewImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT * 0.65 },
   previewNav: {
     position: "absolute",
     top: "50%",
@@ -1646,12 +1437,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
   },
-  previewRemoveBtn: {
-    backgroundColor: "#EF4444",
-  },
-  previewActionText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#111827",
-  },
+  previewRemoveBtn: { backgroundColor: "#EF4444" },
+  previewActionText: { fontSize: 15, fontWeight: "700", color: "#111827" },
 });

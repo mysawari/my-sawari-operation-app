@@ -87,16 +87,16 @@ export default function TabsLayout() {
           }}
         />
 
-      <Tabs.Screen
-  name="maintenance"
-  options={{
-    title: "Maintenance",
-    href: "/(tabs)/maintenance",
-    tabBarIcon: ({ color, size }) => (
-      <Ionicons name="build-outline" size={size} color={color} />
-    ),
-  }}
-/>
+        <Tabs.Screen
+          name="maintenance"
+          options={{
+            title: "Maintenance",
+            href: "/(tabs)/maintenance",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="build-outline" size={size} color={color} />
+            ),
+          }}
+        />
 
         <Tabs.Screen
           name="profile"

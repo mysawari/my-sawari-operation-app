@@ -1,22 +1,21 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import {
-  Animated,
-  Easing,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { Animated, Easing, StyleSheet, Text, View } from "react-native";
 
 import api from "../../../services/api";
 
-const DISK_CACHE_KEY = "home_stats_grid_cache_v1";
+/* ---------------------------------------------------------------------- */
+/*  Endpoint — change the prefix to wherever the stats router is mounted  */
+/*  e.g. app.use("/dashboard", dashboardRoutes) -> "/dashboard/stats"     */
+/* ---------------------------------------------------------------------- */
+const STATS_ENDPOINT = "/dashboard/stats";
+// v2: data shape changed (now includes car/bike breakdown)
+const DISK_CACHE_KEY = "home_stats_grid_cache_v2";
 
 const memoryCache = {
   statsData: null,
+  staleCount: 0,
   fetchedAt: null,
 };
 
@@ -29,22 +28,22 @@ const hydrateCacheFromDisk = () => {
       const parsed = JSON.parse(raw);
       if (memoryCache.statsData == null && Array.isArray(parsed?.statsData)) {
         memoryCache.statsData = parsed.statsData;
+        memoryCache.staleCount = Number(parsed.staleCount) || 0;
       }
     })
     .catch(() => {});
   return hydrationPromise;
 };
 
-const persistCacheToDisk = (statsData) => {
+const persistCacheToDisk = (statsData, staleCount) => {
   AsyncStorage.setItem(
     DISK_CACHE_KEY,
-    JSON.stringify({ statsData, fetchedAt: Date.now() }),
+    JSON.stringify({ statsData, staleCount, fetchedAt: Date.now() }),
   ).catch(() => {});
 };
 
 /* ---------------------------------------------------------------------- */
-/*  Design tokens — keep in sync with the rest of the app if you already  */
-/*  have a shared theme file; inlined here so this component stays drop-in */
+/*  Design tokens                                                          */
 /* ---------------------------------------------------------------------- */
 const COLORS = {
   surface: "#FFFFFF",
@@ -53,40 +52,82 @@ const COLORS = {
   inkSoft: "#6B7086",
   inkFaint: "#A6AAB8",
   skeleton: "#EEF0F4",
+  warn: "#B45309",
+  warnSoft: "#FEF3E2",
 };
 
 const STAT_META = {
-  active: { icon: "sync-outline", tint: "#2563EB", tintSoft: "#EAF1FE" },
-  vehicles: { icon: "car-sport-outline", tint: "#16A34A", tintSoft: "#E9F8EE" },
-  available: {
-    icon: "checkmark-circle-outline",
-    tint: "#D97706",
-    tintSoft: "#FDF1DF",
-  },
-  dueToday: { icon: "time-outline", tint: "#7C3AED", tintSoft: "#F2EBFE" },
+  onRent: { title: "On Rent", tint: "#2563EB" },
+  booked: { title: "Booked", tint: "#7C3AED" },
+  unbooked: { title: "Free", tint: "#16A34A" },
+  maintenance: { title: "Service", tint: "#DC2626" },
+  total: { title: "Total", tint: "#151726" },
 };
 
-const STAT_ORDER = ["active", "vehicles", "available", "dueToday"];
+const STAT_ORDER = ["onRent", "booked", "unbooked", "maintenance", "total"];
 
-/* Skeleton placeholder — mirrors the real grid's dimensions exactly so    */
-/* there's no layout shift / jump when the data pops in.                  */
+// Maps the /stats response to the grid items
+const buildStatsData = (data) => {
+  const stats = data?.stats || {};
+  const breakdown = data?.breakdown || {};
+
+  const pick = (id, statKey) => ({
+    id,
+    title: STAT_META[id].title,
+    count: Number(stats[statKey]) || 0,
+    car: Number(breakdown[statKey]?.car) || 0,
+    bike: Number(breakdown[statKey]?.bike) || 0,
+  });
+
+  return [
+    pick("onRent", "onRentToday"),
+    pick("booked", "bookedToday"),
+    pick("unbooked", "unbookedToday"),
+    pick("maintenance", "maintenanceToday"),
+    pick("total", "totalVehicles"),
+  ];
+};
+
+/* Skeleton placeholder — same dimensions as the real block, no layout jump */
 function SkeletonBlock({ isLast, pulse }) {
   return (
     <View style={[styles.statBlock, !isLast && styles.borderRight]}>
       <Animated.View style={[styles.skeletonCount, { opacity: pulse }]} />
       <Animated.View style={[styles.skeletonLabel, { opacity: pulse }]} />
+      <Animated.View style={[styles.skeletonSplit, { opacity: pulse }]} />
+    </View>
+  );
+}
+
+function StatBlock({ item, isLast }) {
+  const meta = STAT_META[item.id] || STAT_META.total;
+
+  return (
+    <View style={[styles.statBlock, !isLast && styles.borderRight]}>
+      <Text style={[styles.count, { color: meta.tint }]}>{item.count}</Text>
+
+      <Text style={styles.label} numberOfLines={1}>
+        {item.title}
+      </Text>
+
+      <View style={styles.split}>
+        <View style={styles.splitItem}>
+          <Ionicons name="car-outline" size={10} color={COLORS.inkFaint} />
+          <Text style={styles.splitText}>{item.car}</Text>
+        </View>
+        <View style={styles.splitItem}>
+          <Ionicons name="bicycle-outline" size={10} color={COLORS.inkFaint} />
+          <Text style={styles.splitText}>{item.bike}</Text>
+        </View>
+      </View>
     </View>
   );
 }
 
 export default function StatsGrid() {
-  const router = useRouter();
-
-  // Seed state directly from the in-memory cache so a remount within the
-  // same app session (e.g. navigating away and back to the home tab)
-  // renders real numbers on the very first frame — no loading state at all.
+  // Seed from memory so a remount in the same session paints instantly
   const [statsData, setStatsData] = useState(memoryCache.statsData || []);
-  // Only block on the skeleton if we have truly nothing to show yet.
+  const [staleCount, setStaleCount] = useState(memoryCache.staleCount || 0);
   const [loading, setLoading] = useState(memoryCache.statsData == null);
 
   const pulse = useRef(new Animated.Value(0.4)).current;
@@ -94,8 +135,6 @@ export default function StatsGrid() {
     new Animated.Value(memoryCache.statsData ? 1 : 0),
   ).current;
 
-  // Guards against a slow response landing after the component has
-  // unmounted (e.g. user navigated away before the fetch resolved).
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -104,25 +143,21 @@ export default function StatsGrid() {
     };
   }, []);
 
-  // ---- Disk hydration (cold start only) + kick off a background fetch ----
+  // ---- Disk hydration (cold start only) + background fetch ----
   useEffect(() => {
     let cancelled = false;
 
     if (memoryCache.statsData != null) {
-      // Already have something in memory (e.g. another mount this
-      // session already loaded it) — just refresh silently in the
-      // background, no disk read needed.
       fetchDashboardStats({ silent: true });
     } else {
       hydrateCacheFromDisk().then(() => {
         if (cancelled) return;
         if (memoryCache.statsData != null) {
-          // Disk had something — paint it immediately, then refresh.
           setStatsData(memoryCache.statsData);
+          setStaleCount(memoryCache.staleCount || 0);
           setLoading(false);
           fetchDashboardStats({ silent: true });
         } else {
-          // Genuine first-ever load: nothing in memory, nothing on disk.
           fetchDashboardStats({ silent: false });
         }
       });
@@ -134,7 +169,7 @@ export default function StatsGrid() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---- Skeleton pulse animation, only runs while genuinely loading ----
+  // ---- Skeleton pulse, only while loading ----
   useEffect(() => {
     let loop;
     if (loading) {
@@ -159,9 +194,7 @@ export default function StatsGrid() {
     return () => loop && loop.stop();
   }, [loading, pulse]);
 
-  // Fade in only plays the first time real data replaces the skeleton;
-  // silent background refreshes swap numbers in place with no animation
-  // so live-updating counts don't flicker.
+  // ---- Fade in only the first time real data replaces the skeleton ----
   const hasFadedInRef = useRef(!loading);
   useEffect(() => {
     if (!loading && !hasFadedInRef.current) {
@@ -177,88 +210,33 @@ export default function StatsGrid() {
   }, [loading, fadeIn]);
 
   const fetchDashboardStats = async ({ silent } = {}) => {
-    // Only show the blocking skeleton when there's nothing on screen yet.
     if (!silent) setLoading(true);
 
     try {
-      const [vehiclesRes, activeRes] = await Promise.all([
-        api.get("/vehicles/all"),
-        api.get("/handover/active-handovers"),
-      ]);
+      const res = await api.get(STATS_ENDPOINT);
 
-      const totalVehicles = vehiclesRes.data?.total || 0;
+      if (!res.data?.success) {
+        throw new Error(res.data?.message || "Failed to load stats");
+      }
 
-      const availableVehicles =
-        vehiclesRes.data?.stats?.find(
-          (item) => item._id?.toLowerCase() === "available",
-        )?.count || 0;
-
-      const activeRentals = activeRes.data?.count || 0;
-
-      const today = new Date();
-
-      const dueToday =
-        activeRes.data?.data?.filter((item) => {
-          if (!item.trip?.dropDateTime) return false;
-          const d = new Date(item.trip.dropDateTime);
-          return (
-            d.getDate() === today.getDate() &&
-            d.getMonth() === today.getMonth() &&
-            d.getFullYear() === today.getFullYear()
-          );
-        }).length || 0;
-
-      const nextStatsData = [
-        {
-          id: "active",
-          title: "Active",
-          count: activeRentals,
-          clickable: false,
-        },
-        {
-          id: "vehicles",
-          title: "Vehicles",
-          count: totalVehicles,
-          clickable: false,
-        },
-        {
-          id: "available",
-          title: "Available",
-          count: availableVehicles,
-          clickable: true,
-          route: "../../screens/VehiclesAvailable",
-          params: { filter: "available" },
-        },
-        {
-          id: "dueToday",
-          title: "Due Today",
-          count: dueToday,
-          clickable: false,
-        },
-      ];
+      const nextStatsData = buildStatsData(res.data);
+      const nextStale = Number(res.data?.diagnostics?.staleActiveBookings) || 0;
 
       memoryCache.statsData = nextStatsData;
+      memoryCache.staleCount = nextStale;
       memoryCache.fetchedAt = Date.now();
-      persistCacheToDisk(nextStatsData);
+      persistCacheToDisk(nextStatsData, nextStale);
 
       if (mountedRef.current) {
         setStatsData(nextStatsData);
+        setStaleCount(nextStale);
       }
     } catch (error) {
       console.log("STATS ERROR:", error?.response?.data || error.message);
-      // On a silent background refresh failure we deliberately keep
-      // showing whatever's already on screen rather than clearing it.
+      // Keep whatever is already on screen on a failed refresh
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  };
-
-  const handleCardPress = (item) => {
-    if (!item.clickable || !item.route) return;
-    router.push({
-      pathname: item.route,
-      params: item.params || {},
-    });
   };
 
   if (loading) {
@@ -276,41 +254,28 @@ export default function StatsGrid() {
   }
 
   return (
-    <Animated.View style={[styles.wrapper, { opacity: fadeIn }]}>
-      {statsData.map((item, index) => {
-        const meta = STAT_META[item.id] || STAT_META.active;
-        const isLast = index === statsData.length - 1;
-        const Block = item.clickable ? TouchableOpacity : View;
-
-        return (
-          <Block
+    <View>
+      <Animated.View style={[styles.wrapper, { opacity: fadeIn }]}>
+        {statsData.map((item, index) => (
+          <StatBlock
             key={item.id}
-            {...(item.clickable
-              ? { activeOpacity: 0.7, onPress: () => handleCardPress(item) }
-              : {})}
-            style={[
-              styles.statBlock,
-              !isLast && styles.borderRight,
-              item.clickable && styles.statBlockActive,
-            ]}
-          >
-            <Text style={[styles.count, { color: meta.tint }]}>
-              {item.count}
-            </Text>
+            item={item}
+            isLast={index === statsData.length - 1}
+          />
+        ))}
+      </Animated.View>
 
-            <Text style={styles.label} numberOfLines={1}>
-              {item.title}
-            </Text>
-
-            {item.clickable && (
-              <View style={styles.tapHint}>
-                <Ionicons name="chevron-forward" size={11} color={meta.tint} />
-              </View>
-            )}
-          </Block>
-        );
-      })}
-    </Animated.View>
+      {staleCount > 0 && (
+        <View style={styles.staleBanner}>
+          <Ionicons name="alert-circle-outline" size={13} color={COLORS.warn} />
+          <Text style={styles.staleText}>
+            {staleCount} old rental{staleCount > 1 ? "s" : ""} still marked
+            active — close {staleCount > 1 ? "them" : "it"} to keep counts
+            correct
+          </Text>
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -321,7 +286,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     backgroundColor: COLORS.surface,
     borderRadius: 16,
-    paddingVertical: 16,
+    paddingVertical: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
     shadowColor: "#151726",
@@ -334,23 +299,12 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 4,
+    paddingHorizontal: 2,
     paddingVertical: 2,
-  },
-  statBlockActive: {
-    transform: [{ scale: 1 }],
   },
   borderRight: {
     borderRightWidth: 1,
     borderRightColor: COLORS.border,
-  },
-  iconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 6,
   },
   count: {
     fontSize: 17,
@@ -358,24 +312,46 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   label: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: COLORS.inkSoft,
     fontWeight: "600",
     textTransform: "uppercase",
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
   },
-  tapHint: {
-    position: "absolute",
-    top: 2,
-    right: 10,
-    width: 16,
-    height: 16,
-    borderRadius: 8,
+  split: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    marginTop: 5,
+    gap: 6,
   },
-  /* Skeleton placeholders — sized to match .count and .label exactly so   */
-  /* the grid's height never shifts between loading and loaded states.    */
+  splitItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  splitText: {
+    fontSize: 10,
+    color: COLORS.inkFaint,
+    fontWeight: "600",
+  },
+  staleBanner: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: COLORS.warnSoft,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  staleText: {
+    flex: 1,
+    fontSize: 11,
+    color: COLORS.warn,
+    fontWeight: "500",
+  },
+  /* Skeletons — sized like count / label / split so height never shifts */
   skeletonCount: {
     width: 22,
     height: 17,
@@ -388,5 +364,12 @@ const styles = StyleSheet.create({
     height: 10,
     borderRadius: 3,
     backgroundColor: COLORS.skeleton,
+  },
+  skeletonSplit: {
+    width: 34,
+    height: 10,
+    borderRadius: 3,
+    backgroundColor: COLORS.skeleton,
+    marginTop: 5,
   },
 });

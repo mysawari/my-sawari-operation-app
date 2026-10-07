@@ -28,6 +28,43 @@ import useAuthStore from "../../store/authStore";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
+/* ====================================================================== */
+/*  ADD DROP (team leaders only)                                           */
+/*                                                                         */
+/*  The leader taps "Add Drop" on a card → popup → location, landmark,     */
+/*  date, reach time and driver → saved as a "drop" task in the           */
+/*  ServiceTask collection (POST /service/drop-task).                     */
+/*  The driver then tracks it in the Pickup & Drop screen (My Tasks):     */
+/*  Start → I've Reached → Complete. Nothing about it is shown on this    */
+/*  card, and no payment is changed.                                      */
+/* ====================================================================== */
+
+// Must match LEADER_ROLES in backend serviceTaskController.js
+const LEADER_ROLES = [
+  "SUPER_ADMIN",
+  "ADMIN",
+  "BRANCH_MANAGER",
+  "OPERATIONS",
+  "FLEET_MANAGER",
+  "DRIVER_COORDINATOR",
+];
+
+// Is the logged-in user a team leader?
+const isTeamLeader = () => {
+  const s = useAuthStore.getState?.() || {};
+  const u = s.user?.user || s.user || {};
+  return LEADER_ROLES.includes(u.role);
+};
+
+// bookingId → its drop task (null = no drop yet). Only used to show
+// "Add Drop" vs "Change Drop" and to prefill the popup.
+// Module level, so it survives leaving / re-entering the screen.
+const dropCache = {};
+
+// A drop can be changed only before the driver starts the trip
+const isChangeable = (task) =>
+  !!task && ["pending", "assigned"].includes(task.status);
+
 const BASE_TABS = [
   { id: "today", label: "Due Today" },
   { id: "all", label: "All Active" },
@@ -357,15 +394,6 @@ function mapRawHandoverToCard(item) {
   const dropLocation =
     item.dropLocation || item.bookingId?.drop?.location || "-";
 
-  const assignedDriver = item.assignedDriver
-    ? {
-        _id: item.assignedDriver._id,
-        fullName: item.assignedDriver.fullName || "",
-        mobileNumber: item.assignedDriver.mobileNumber || "",
-        profileImage: item.assignedDriver.profileImage || "",
-      }
-    : null;
-
   const name =
     item.vehicle?.vehicleId?.vehicleName ||
     item.vehicle?.vehicleName ||
@@ -383,8 +411,12 @@ function mapRawHandoverToCard(item) {
     .join(" ")
     .toLowerCase();
 
+  // Booking id (populated object or plain id) — sent when adding a drop
+  const bookingId = String(item.bookingId?._id || item.bookingId || "");
+
   return {
     id: item._id,
+    bookingId,
     name,
     plate,
     image: (() => {
@@ -442,76 +474,146 @@ function mapRawHandoverToCard(item) {
     statusColor,
     statusBg,
     tab: isComp ? "completed" : tabField,
-    assignedDriver,
   };
 }
 
 // ==========================================
-// COMPONENT: Assign Driver Modal
+// COMPONENT: Add Drop popup  (team leader)
+//
+//   Drop location  (prefilled from the booking)
+//   Landmark       (optional)
+//   Date           (chips: next days)
+//   Reach time     (−1h  −15m  +15m  +1h)
+//   Driver         (team members list)
+//
+//   Saves → POST /service/drop-task  → a "drop" task in ServiceTask,
+//   already assigned. The driver tracks it in Pickup & Drop → My Tasks.
+//   No payment fields.
 // ==========================================
-function AssignDriverModal({
-  visible,
-  onClose,
-  assignUrl,
-  driversUrl = "/bookings/drivers",
-  currentDriverId = null,
-  onAssigned,
-}) {
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const dayLabel = (d) => {
+  const start = (x) =>
+    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((start(d) - start(new Date())) / DAY_MS);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  return d.toLocaleDateString([], { weekday: "short", day: "2-digit" });
+};
+
+// task = the existing drop (Change Drop) or null (Add Drop)
+function DropTaskModal({ visible, item, task, token, onClose, onSaved }) {
+  const isChange = !!task;
   const [drivers, setDrivers] = useState([]);
-  const [selectedDriver, setSelectedDriver] = useState(currentDriverId);
   const [loadingDrivers, setLoadingDrivers] = useState(false);
-  const [assigning, setAssigning] = useState(false);
+  const [saving, setSaving] = useState(false);
 
+  const [address, setAddress] = useState("");
+  const [landmark, setLandmark] = useState("");
+  const [reachAt, setReachAt] = useState(new Date());
+  const [driverId, setDriverId] = useState(null);
+
+  // Fill the form each time the popup opens
   useEffect(() => {
-    if (visible) {
-      setSelectedDriver(currentDriverId);
-      fetchDrivers();
-    }
-  }, [visible, currentDriverId]);
+    if (!visible || !item) return;
 
-  const fetchDrivers = async () => {
-    try {
-      setLoadingDrivers(true);
-      const res = await api.get(driversUrl);
-      if (res.data.success) {
-        setDrivers(res.data.data || []);
-      } else {
-        Alert.alert("Error", res.data.message || "Unable to load drivers.");
-      }
-    } catch (err) {
-      Alert.alert(
-        "Error",
-        err?.response?.data?.message || "Unable to load drivers.",
-      );
-    } finally {
-      setLoadingDrivers(false);
+    // Change Drop: start from the saved drop.
+    // Add Drop: start from the booking's return time and drop location.
+    const bookingAddress =
+      item.dropLocation && item.dropLocation !== "-" ? item.dropLocation : "";
+    const savedTime = task?.scheduledAt ? new Date(task.scheduledAt) : null;
+    const bookingTime = item.dropAt ? new Date(item.dropAt) : null;
+
+    setReachAt(savedTime || bookingTime || new Date());
+    setAddress(task?.address || bookingAddress);
+    setLandmark(task?.landmark || "");
+    setDriverId(task?.assignedTo?._id || null);
+
+    let cancelled = false;
+    setLoadingDrivers(true);
+    api
+      .get("/service/team-members", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      .then((res) => !cancelled && setDrivers(res.data?.data || []))
+      .catch((err) =>
+        Alert.alert(
+          "Error",
+          err?.response?.data?.message || "Unable to load team members.",
+        ),
+      )
+      .finally(() => !cancelled && setLoadingDrivers(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, item, task, token]);
+
+  // Date chips: 7 days from today (and the booked day, if it's earlier)
+  const dayChips = (() => {
+    const base = new Date();
+    base.setHours(0, 0, 0, 0);
+    const days = Array.from(
+      { length: 7 },
+      (_, i) => new Date(base.getTime() + i * DAY_MS),
+    );
+    const booked = item?.dropAt ? new Date(item.dropAt) : null;
+    if (booked) {
+      booked.setHours(0, 0, 0, 0);
+      if (booked < base) days.unshift(booked);
     }
+    return days;
+  })();
+
+  const sameDay = (a, b) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+
+  const pickDay = (day) => {
+    const d = new Date(day);
+    d.setHours(reachAt.getHours(), reachAt.getMinutes(), 0, 0);
+    setReachAt(d);
   };
 
-  const handleAssign = async () => {
-    if (!selectedDriver) {
-      return Alert.alert("Select Driver", "Please choose a driver first.");
+  const shiftTime = (minutes) =>
+    setReachAt((d) => new Date(d.getTime() + minutes * 60 * 1000));
+
+  const handleSave = async () => {
+    if (!address.trim()) {
+      return Alert.alert("Drop location", "Please enter the drop location.");
+    }
+    if (!driverId) {
+      return Alert.alert("Driver", "Please select a driver.");
     }
     try {
-      setAssigning(true);
-      const res = await api.put(assignUrl, { driverId: selectedDriver });
-
-      if (res.data.success) {
-        Alert.alert("Success", res.data.message || "Driver assigned.");
-        const assignedDriverObj =
-          res.data.data || drivers.find((d) => d._id === selectedDriver);
-        onAssigned?.(assignedDriverObj);
-        onClose();
-      } else {
-        Alert.alert("Error", res.data.message || "Unable to assign driver.");
+      setSaving(true);
+      const res = await api.post(
+        "/service/drop-task",
+        {
+          bookingId: item.bookingId,
+          address: address.trim(),
+          landmark: landmark.trim(),
+          scheduledAt: reachAt.toISOString(),
+          assignedTo: driverId,
+        },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.data?.success) {
+        throw new Error(res.data?.message || "Unable to save the drop.");
       }
+      onSaved?.(res.data.data); // card switches to "Change Drop"
+      Alert.alert(
+        isChange ? "Drop changed" : "Drop added",
+        "The driver can see it in Pickup & Drop → My Tasks.",
+      );
+      onClose();
     } catch (err) {
       Alert.alert(
         "Error",
-        err?.response?.data?.message || "Unable to assign driver.",
+        err?.response?.data?.message || err?.message || "Unable to save.",
       );
     } finally {
-      setAssigning(false);
+      setSaving(false);
     }
   };
 
@@ -519,18 +621,21 @@ function AssignDriverModal({
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType="slide"
       onRequestClose={onClose}
     >
       <View style={modalStyles.overlay}>
         <View style={modalStyles.modalCard}>
           <View style={modalStyles.dragHandle} />
 
+          {/* Header */}
           <View style={modalStyles.header}>
-            <View>
-              <Text style={modalStyles.title}>Assign Duty Driver</Text>
-              <Text style={modalStyles.subtitle}>
-                Select an available driver for this task
+            <View style={{ flex: 1 }}>
+              <Text style={modalStyles.title}>
+                {isChange ? "Change Drop" : "Add Drop"}
+              </Text>
+              <Text style={modalStyles.subtitle} numberOfLines={1}>
+                {item?.name} • {item?.plate} • {item?.customer}
               </Text>
             </View>
             <TouchableOpacity
@@ -542,68 +647,156 @@ function AssignDriverModal({
             </TouchableOpacity>
           </View>
 
-          {loadingDrivers ? (
-            <View style={modalStyles.centerContainer}>
-              <ActivityIndicator size="small" color="#2563EB" />
-              <Text style={modalStyles.loadingText}>
-                Fetching active drivers...
-              </Text>
-            </View>
-          ) : drivers.length === 0 ? (
-            <View style={modalStyles.emptyState}>
-              <Ionicons
-                name="person-remove-outline"
-                size={36}
-                color="#94A3B8"
-              />
-              <Text style={modalStyles.emptyTitle}>No Drivers Available</Text>
-              <Text style={modalStyles.emptySub}>
-                Register active drivers to assign tasks.
-              </Text>
-            </View>
-          ) : (
-            <FlatList
-              data={drivers}
-              keyExtractor={(item) => item._id}
-              style={{ maxHeight: 300 }}
-              showsVerticalScrollIndicator={false}
-              renderItem={({ item }) => {
-                const isSelected = selectedDriver === item._id;
-                return (
-                  <TouchableOpacity
-                    style={[
-                      modalStyles.driverItem,
-                      isSelected && modalStyles.driverSelected,
-                    ]}
-                    activeOpacity={0.7}
-                    onPress={() => setSelectedDriver(item._id)}
-                  >
-                    <Ionicons
-                      name={isSelected ? "checkmark-circle" : "ellipse-outline"}
-                      size={22}
-                      color={isSelected ? "#2563EB" : "#94A3B8"}
-                    />
-                    <View style={modalStyles.driverMeta}>
-                      <Text style={modalStyles.driverName} numberOfLines={1}>
-                        {item.fullName || item.name}
-                      </Text>
-                      <Text style={modalStyles.driverPhone}>
-                        {item.mobileNumber || "No contact info"}
+          <FlatList
+            data={loadingDrivers ? [] : drivers}
+            keyExtractor={(d) => d._id}
+            style={{ maxHeight: 520 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            ListHeaderComponent={
+              <View>
+                {/* Location */}
+                <Text style={modalStyles.fieldLabel}>Drop location *</Text>
+                <TextInput
+                  value={address}
+                  onChangeText={setAddress}
+                  placeholder="e.g. LGBI Airport, Borjhar"
+                  placeholderTextColor="#94A3B8"
+                  style={modalStyles.input}
+                />
+
+                <Text style={modalStyles.fieldLabel}>Landmark</Text>
+                <TextInput
+                  value={landmark}
+                  onChangeText={setLandmark}
+                  placeholder="e.g. Departure gate 2"
+                  placeholderTextColor="#94A3B8"
+                  style={modalStyles.input}
+                />
+
+                {/* Date */}
+                <Text style={modalStyles.fieldLabel}>Date</Text>
+                <FlatList
+                  horizontal
+                  data={dayChips}
+                  keyExtractor={(d) => String(d.getTime())}
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 6 }}
+                  renderItem={({ item: day }) => {
+                    const active = sameDay(day, reachAt);
+                    return (
+                      <TouchableOpacity
+                        style={[
+                          modalStyles.dayChip,
+                          active && modalStyles.dayChipActive,
+                        ]}
+                        onPress={() => pickDay(day)}
+                      >
+                        <Text
+                          style={[
+                            modalStyles.dayChipText,
+                            active && modalStyles.dayChipTextActive,
+                          ]}
+                        >
+                          {dayLabel(day)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  }}
+                />
+
+                {/* Time */}
+                <Text style={modalStyles.fieldLabel}>Reach by</Text>
+                <View style={modalStyles.timeRow}>
+                  <Text style={modalStyles.timeValue}>
+                    {reachAt.toLocaleDateString([], {
+                      day: "2-digit",
+                      month: "short",
+                    })}
+                    ,{" "}
+                    {reachAt.toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </Text>
+                  {[
+                    { label: "−1h", min: -60 },
+                    { label: "−15m", min: -15 },
+                    { label: "+15m", min: 15 },
+                    { label: "+1h", min: 60 },
+                  ].map((b) => (
+                    <TouchableOpacity
+                      key={b.label}
+                      style={modalStyles.timeBtn}
+                      onPress={() => shiftTime(b.min)}
+                    >
+                      <Text style={modalStyles.timeBtnText}>{b.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Driver */}
+                <Text style={modalStyles.fieldLabel}>Driver *</Text>
+                {loadingDrivers && (
+                  <View style={modalStyles.centerContainer}>
+                    <ActivityIndicator size="small" color="#2563EB" />
+                    <Text style={modalStyles.loadingText}>
+                      Loading team members...
+                    </Text>
+                  </View>
+                )}
+              </View>
+            }
+            ListEmptyComponent={
+              loadingDrivers ? null : (
+                <View style={modalStyles.emptyState}>
+                  <Ionicons
+                    name="person-remove-outline"
+                    size={30}
+                    color="#94A3B8"
+                  />
+                  <Text style={modalStyles.emptyTitle}>No team members</Text>
+                </View>
+              )
+            }
+            renderItem={({ item: d }) => {
+              const isSelected = driverId === d._id;
+              return (
+                <TouchableOpacity
+                  style={[
+                    modalStyles.driverItem,
+                    isSelected && modalStyles.driverSelected,
+                  ]}
+                  activeOpacity={0.7}
+                  onPress={() => setDriverId(d._id)}
+                >
+                  <Ionicons
+                    name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                    size={22}
+                    color={isSelected ? "#2563EB" : "#94A3B8"}
+                  />
+                  <View style={modalStyles.driverMeta}>
+                    <Text style={modalStyles.driverName} numberOfLines={1}>
+                      {d.fullName}
+                    </Text>
+                    <Text style={modalStyles.driverPhone}>
+                      {[d.mobileNumber, d.role].filter(Boolean).join(" • ") ||
+                        "No contact info"}
+                    </Text>
+                  </View>
+                  {isSelected && (
+                    <View style={modalStyles.selectedBadge}>
+                      <Text style={modalStyles.selectedBadgeText}>
+                        Selected
                       </Text>
                     </View>
-                    {isSelected && (
-                      <View style={modalStyles.selectedBadge}>
-                        <Text style={modalStyles.selectedBadgeText}>
-                          Selected
-                        </Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                );
-              }}
-            />
-          )}
+                  )}
+                </TouchableOpacity>
+              );
+            }}
+          />
 
+          {/* Footer */}
           <View style={modalStyles.footerRow}>
             <TouchableOpacity style={modalStyles.cancelBtn} onPress={onClose}>
               <Text style={modalStyles.cancelBtnText}>Cancel</Text>
@@ -611,16 +804,17 @@ function AssignDriverModal({
             <TouchableOpacity
               style={[
                 modalStyles.assignBtn,
-                (!selectedDriver || assigning) && modalStyles.assignBtnDisabled,
+                (saving || !driverId || !address.trim()) &&
+                  modalStyles.assignBtnDisabled,
               ]}
-              onPress={handleAssign}
-              disabled={!selectedDriver || assigning}
+              onPress={handleSave}
+              disabled={saving}
             >
-              {assigning ? (
+              {saving ? (
                 <ActivityIndicator color="#FFFFFF" size="small" />
               ) : (
                 <Text style={modalStyles.assignBtnText}>
-                  Confirm Assignment
+                  {isChange ? "Save Changes" : "Add Drop"}
                 </Text>
               )}
             </TouchableOpacity>
@@ -722,8 +916,23 @@ function SkeletonCard() {
 /*  CarCard — memoized; active cards re-render on the shared 30s clock.    */
 /* ---------------------------------------------------------------------- */
 const CarCard = memo(
-  function CarCard({ item, onOpenDetail, onCall, onAssignDriver }) {
+  function CarCard({
+    item,
+    onOpenDetail,
+    onCall,
+    onOpenDropForm, // leader: open the Add / Change Drop popup
+    leader,
+    dropTask, // this booking's drop task, or null (only for the button label)
+  }) {
     const isCompleted = item.tab === "completed";
+
+    // Only team leaders, only for cars not yet received.
+    //   no drop (or cancelled) → "Add Drop"
+    //   drop not started yet   → "Change Drop"
+    //   driver already started → small note, no button
+    const hasDrop = !!dropTask && dropTask.status !== "cancelled";
+    const showDropButton = leader && !isCompleted;
+    const dropLocked = hasDrop && !isChangeable(dropTask);
     const hasBalance = item.balanceAmount > 0;
     const hasDropLocation = item.dropLocation && item.dropLocation !== "-";
     const hasPhone = !!item.phone && item.phone !== "-";
@@ -858,46 +1067,47 @@ const CarCard = memo(
               </View>
             </View>
 
-            {/* Driver Allocation Row */}
-            <View style={styles.driverAllocationRow}>
-              {item.assignedDriver?.fullName ? (
-                <View style={styles.driverAssignedBadge}>
-                  <Ionicons name="person-circle" size={14} color="#1D4ED8" />
-                  <Text style={styles.driverAssignedText} numberOfLines={1}>
-                    {item.assignedDriver.fullName}
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.noDriverBadge}>
-                  <Ionicons
-                    name="alert-circle-outline"
-                    size={13}
-                    color="#DC2626"
-                  />
-                  <Text style={styles.noDriverText}>Unassigned</Text>
-                </View>
-              )}
-
-              {!isCompleted && (
-                <TouchableOpacity
-                  style={styles.assignActionBtn}
-                  onPress={(e) => {
-                    e.stopPropagation?.();
-                    onAssignDriver(item);
-                  }}
-                  activeOpacity={0.75}
-                >
-                  <Ionicons
-                    name="person-add-outline"
-                    size={11}
-                    color="#2563EB"
-                  />
-                  <Text style={styles.assignActionText}>
-                    {item.assignedDriver ? "Reassign" : "Assign"}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
+            {/* Team leader: Add Drop / Change Drop */}
+            {showDropButton && (
+              <View style={styles.driverAllocationRow}>
+                {dropLocked ? (
+                  // Driver already started — can't change from here
+                  <View style={styles.dropLockedNote}>
+                    <Ionicons
+                      name="checkmark-circle-outline"
+                      size={12}
+                      color="#16A34A"
+                    />
+                    <Text style={styles.dropLockedText}>
+                      {dropTask.status === "completed"
+                        ? "Drop done"
+                        : "Drop in progress"}
+                    </Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={[
+                      styles.assignActionBtn,
+                      hasDrop && styles.changeDropBtn,
+                    ]}
+                    onPress={(e) => {
+                      e.stopPropagation?.();
+                      onOpenDropForm(item);
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <Ionicons
+                      name={hasDrop ? "create-outline" : "add-circle-outline"}
+                      size={12}
+                      color="#2563EB"
+                    />
+                    <Text style={styles.assignActionText}>
+                      {hasDrop ? "Change Drop" : "Add Drop"}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
 
             {/* Location & Settlement Summary */}
             <View style={styles.badgeWrap}>
@@ -1007,9 +1217,11 @@ const CarCard = memo(
   },
   (prev, next) =>
     prev.item === next.item &&
+    prev.leader === next.leader &&
+    prev.dropTask === next.dropTask &&
     prev.onOpenDetail === next.onOpenDetail &&
     prev.onCall === next.onCall &&
-    prev.onAssignDriver === next.onAssignDriver,
+    prev.onOpenDropForm === next.onOpenDropForm,
 );
 
 // ==========================================
@@ -1042,10 +1254,11 @@ export default function ReceiveCarScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Modal State
-  const [assignDriverModalVisible, setAssignDriverModalVisible] =
-    useState(false);
-  const [selectedForDriver, setSelectedForDriver] = useState(null);
+  // Add Drop popup: the card it was opened for (null = closed)
+  const [dropFormFor, setDropFormFor] = useState(null);
+  const leader = isTeamLeader();
+  // bookingId → drop task (null = none). Drives "Add Drop" / "Change Drop".
+  const [drops, setDrops] = useState(() => ({ ...dropCache }));
 
   const flatListRef = useRef(null);
   const activeTabRef = useRef(activeTab);
@@ -1284,6 +1497,41 @@ export default function ReceiveCarScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch]);
 
+  // ---- Which cars already have a drop? (leaders only, one call) ----
+  //      Only asks for bookings we haven't checked yet.
+  useEffect(() => {
+    if (!leader || !token || !items.length) return;
+    const ids = [
+      ...new Set(
+        items.map((c) => c.bookingId).filter((id) => id && !(id in dropCache)),
+      ),
+    ];
+    if (!ids.length) return;
+
+    api
+      .get("/service/by-bookings", {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { bookingIds: ids.join(","), type: "drop" },
+      })
+      .then((res) => {
+        const found = res.data?.data || {};
+        ids.forEach((id) => {
+          dropCache[id] = found[id] || null;
+        });
+        setDrops({ ...dropCache });
+      })
+      .catch(() => {
+        /* label just stays "Add Drop" */
+      });
+  }, [items, leader, token]);
+
+  // After Add / Change in the popup → the card now shows "Change Drop"
+  const handleDropSaved = useCallback((task) => {
+    if (!task?.bookingId) return;
+    dropCache[task.bookingId] = task;
+    setDrops({ ...dropCache });
+  }, []);
+
   useEffect(() => {
     screenCache.activeTab = activeTab;
   }, [activeTab]);
@@ -1365,6 +1613,10 @@ export default function ReceiveCarScreen() {
     });
     searchCache.clear();
 
+    // Re-check drops (a driver may have started / finished one)
+    Object.keys(dropCache).forEach((k) => delete dropCache[k]);
+    setDrops({});
+
     fetchTab(activeTab, {
       page: 1,
       silent: true,
@@ -1390,31 +1642,9 @@ export default function ReceiveCarScreen() {
     }
   }, []);
 
-  const openAssignDriverModal = useCallback((item) => {
-    setSelectedForDriver(item);
-    setAssignDriverModalVisible(true);
-  }, []);
-
-  const closeAssignDriverModal = () => {
-    setAssignDriverModalVisible(false);
-    setSelectedForDriver(null);
-  };
-
-  const handleDriverAssigned = (driver) => {
-    const id = selectedForDriver?.id;
-    const patch = (entry) => {
-      if (!entry?.items?.length) return;
-      entry.items = entry.items.map((c) =>
-        c.id === id ? { ...c, assignedDriver: driver } : c,
-      );
-    };
-    // Same vehicle can appear in several tabs / searches — update all.
-    Object.values(screenCache.tabs).forEach(patch);
-    searchCache.forEach(patch);
-    setItems((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, assignedDriver: driver } : c)),
-    );
-  };
+  // Leader taps "Add Drop" on a card
+  const openDropForm = useCallback((item) => setDropFormFor(item), []);
+  const closeDropForm = useCallback(() => setDropFormFor(null), []);
 
   const handleOpenDetail = useCallback(
     (item, forceReceive = false) => {
@@ -1438,11 +1668,19 @@ export default function ReceiveCarScreen() {
         item={item}
         onOpenDetail={handleOpenDetail}
         onCall={handleCall}
-        onAssignDriver={openAssignDriverModal}
+        onOpenDropForm={openDropForm}
+        leader={leader}
+        dropTask={drops[item.bookingId] || null}
       />
     ),
-    [handleOpenDetail, handleCall, openAssignDriverModal],
+    [handleOpenDetail, handleCall, openDropForm, leader, drops],
   );
+
+  // Drop of the card in the popup: changeable → "Change Drop", else "Add Drop"
+  const dropFormTask = (() => {
+    const t = dropFormFor ? drops[dropFormFor.bookingId] : null;
+    return isChangeable(t) ? t : null;
+  })();
 
   // ---- Scroll position persistence, per tab (not for search results) ----
   const handleScroll = useCallback(
@@ -1645,17 +1883,15 @@ export default function ReceiveCarScreen() {
         </>
       )}
 
-      {/* Inline Driver Assignment Modal */}
-      {selectedForDriver && (
-        <AssignDriverModal
-          visible={assignDriverModalVisible}
-          onClose={closeAssignDriverModal}
-          assignUrl={`/bookings/${selectedForDriver.id}/assign-driver-handover`}
-          driversUrl="/bookings/drivers"
-          currentDriverId={selectedForDriver.assignedDriver?._id || null}
-          onAssigned={handleDriverAssigned}
-        />
-      )}
+      {/* Add Drop popup (team leader) → creates a drop task in ServiceTask */}
+      <DropTaskModal
+        visible={!!dropFormFor}
+        item={dropFormFor}
+        task={dropFormTask}
+        token={token}
+        onClose={closeDropForm}
+        onSaved={handleDropSaved}
+      />
     </SafeAreaView>
   );
 }
@@ -2006,6 +2242,28 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#2563EB",
   },
+  // "Change Drop" — same button, light blue so it reads as "already added"
+  changeDropBtn: {
+    backgroundColor: "#EFF6FF",
+    borderColor: "#BFDBFE",
+  },
+  // "Drop in progress" / "Drop done" — not tappable
+  dropLockedNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#DCFCE7",
+  },
+  dropLockedText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#16A34A",
+  },
 
   // Location & Financial Badges
   badgeWrap: {
@@ -2331,4 +2589,54 @@ const modalStyles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 13,
   },
+
+  // Add Drop form
+  fieldLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#475569",
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  input: {
+    height: 42,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    fontSize: 13,
+    color: "#0F172A",
+    backgroundColor: "#FFFFFF",
+  },
+  dayChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#FFFFFF",
+  },
+  dayChipActive: { backgroundColor: "#0B132B", borderColor: "#0B132B" },
+  dayChipText: { fontSize: 12, fontWeight: "600", color: "#64748B" },
+  dayChipTextActive: { color: "#FFFFFF" },
+  timeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  timeValue: { flex: 1, fontSize: 14, fontWeight: "800", color: "#0F172A" },
+  timeBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 7,
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  timeBtnText: { fontSize: 11, fontWeight: "700", color: "#2563EB" },
 });

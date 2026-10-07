@@ -264,17 +264,6 @@ export default function StatsGrid() {
           />
         ))}
       </Animated.View>
-
-      {staleCount > 0 && (
-        <View style={styles.staleBanner}>
-          <Ionicons name="alert-circle-outline" size={13} color={COLORS.warn} />
-          <Text style={styles.staleText}>
-            {staleCount} old rental{staleCount > 1 ? "s" : ""} still marked
-            active — close {staleCount > 1 ? "them" : "it"} to keep counts
-            correct
-          </Text>
-        </View>
-      )}
     </View>
   );
 }

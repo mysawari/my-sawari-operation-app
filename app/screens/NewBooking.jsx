@@ -368,6 +368,9 @@ function NewBookingScreenInner() {
   // extra slot with the "-" icon. At least one slot always remains.
   const [upiLast4List, setUpiLast4List] = useState([""]);
 
+  const [paymentDate, setPaymentDate] = useState(() => new Date());
+  const [paymentTime, setPaymentTime] = useState(() => new Date());
+
   const [bookingStatus, setBookingStatus] = useState("");
 
   const [fuelLevel, setFuelLevel] = useState(1);
@@ -397,6 +400,7 @@ function NewBookingScreenInner() {
   const [vehicleSearch, setVehicleSearch] = useState("");
 
   const [discountAmount, setDiscountAmount] = useState("");
+  const [sawariCashUsed, setSawariCashUsed] = useState("");
   const [hasMembership, setHasMembership] = useState(false);
   const [membershipTier, setMembershipTier] = useState(null);
 
@@ -499,7 +503,7 @@ function NewBookingScreenInner() {
 
     // Advance AND Discount both come off the balance — neither touches
     // the headline Total shown above.
-    const remainingAmount = Math.max(0, totalAmount - bookingPaid - discount);
+    const remainingAmount = Math.max(0, totalAmount - bookingPaid - discount - toNum(sawariCashUsed));
     const balance = Math.max(0, remainingAmount - receivedNow);
 
     setBalanceAmount(balance.toString());
@@ -507,6 +511,7 @@ function NewBookingScreenInner() {
     totalAmount,
     bookingAmountPaid,
     discountAmount,
+    sawariCashUsed,
     amountReceived,
     cashAmount,
     phonePeAmount,
@@ -623,6 +628,13 @@ function NewBookingScreenInner() {
           ? String(bookingPayment.discountAmount)
           : bookingData.discountAmount != null
             ? String(bookingData.discountAmount)
+            : "",
+      );
+      setSawariCashUsed(
+        bookingPayment?.sawariCashUsed != null
+          ? String(bookingPayment.sawariCashUsed)
+          : bookingData.sawariCashUsed != null
+            ? String(bookingData.sawariCashUsed)
             : "",
       );
 
@@ -748,6 +760,12 @@ function NewBookingScreenInner() {
         setDropTime(validDate);
         setIsDropTimeEdited(true);
         break;
+      case "paymentDate":
+        setPaymentDate(validDate);
+        break;
+      case "paymentTime":
+        setPaymentTime(validDate);
+        break;
       default:
         break;
     }
@@ -763,6 +781,10 @@ function NewBookingScreenInner() {
         return safeDate(dropDate) || new Date();
       case "dropTime":
         return safeDate(dropTime) || new Date();
+      case "paymentDate":
+        return safeDate(paymentDate) || new Date();
+      case "paymentTime":
+        return safeDate(paymentTime) || new Date();
       default:
         return new Date();
     }
@@ -919,7 +941,7 @@ function NewBookingScreenInner() {
       // (Discount comes off here for cap-checking received amounts; Advance
       // is handled separately and reflected in Balance Due, not here).
       const totalPayable = Math.max(
-        toNum(totalAmount) - toNum(discountAmount),
+        toNum(totalAmount) - toNum(discountAmount) - toNum(sawariCashUsed),
         0,
       );
       const received = toNum(amountReceived);
@@ -1033,11 +1055,13 @@ function NewBookingScreenInner() {
           securityDeposit: toNum(securityDeposit),
           extraCharges: toNum(extraCharges),
           discountAmount: toNum(discountAmount),
+          sawariCashUsed: toNum(sawariCashUsed),
           totalAmount,
           bookingAmountPaid: toNum(bookingAmountPaid),
           amountReceivedNow: finalAmountReceived,
           balanceAmount: toNum(balanceAmount),
           paymentMethod,
+          customPaymentDate: combineDateTime(paymentDate, paymentTime),
           // Sent as an array — one entry per UPI reference the user added.
           upiLast4: upiLast4Payload,
           paymentBreakdown,
@@ -1886,6 +1910,28 @@ function NewBookingScreenInner() {
               </View>
             ) : null}
 
+            {/* ── UPI Payment Date & Time ── */}
+            {paymentMethod === "phonepe" || paymentMethod === "mixed" ? (
+              <View style={[styles.row, { marginBottom: 12 }]}>
+                <SelectField
+                  label="Payment Date"
+                  placeholder="Select date"
+                  icon="calendar-outline"
+                  value={formatDate(paymentDate)}
+                  onPress={() => openPicker("date", "paymentDate")}
+                  hint="Date of payment"
+                />
+                <SelectField
+                  label="Payment Time"
+                  placeholder="Select time"
+                  icon="time-outline"
+                  value={formatTime(paymentTime)}
+                  onPress={() => openPicker("time", "paymentTime")}
+                  hint="Time of payment"
+                />
+              </View>
+            ) : null}
+
             <InputField
               label="Notes (Optional)"
               placeholder="Enter notes"
@@ -2004,6 +2050,15 @@ function NewBookingScreenInner() {
                       <Text style={styles.invoiceLabel}>Discount</Text>
                       <Text style={[styles.invoiceValue, { color: "#16A34A" }]}>
                         − ₹{toNum(discountAmount).toLocaleString()}
+                      </Text>
+                    </View>
+                  )}
+
+                  {toNum(sawariCashUsed) > 0 && (
+                    <View style={styles.invoiceRow}>
+                      <Text style={styles.invoiceLabel}>Sawari Cash Used</Text>
+                      <Text style={[styles.invoiceValue, { color: "#16A34A" }]}>
+                        − ₹{toNum(sawariCashUsed).toLocaleString()}
                       </Text>
                     </View>
                   )}

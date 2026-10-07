@@ -294,7 +294,7 @@ const StatusBadge = ({ status }) => {
   );
 };
 
-const BillSummaryCard = ({ billSummary }) => {
+const BillSummaryCard = ({ billSummary, handoverCreatedAt, handoverPaymentMethod, bookingCreatedAt, bookingPaymentMethod }) => {
   const [expanded, setExpanded] = useState(true);
 
   if (!billSummary) return null;
@@ -307,6 +307,7 @@ const BillSummaryCard = ({ billSummary }) => {
     securityDeposit = 0,
     extraCharges = 0,
     discountAmount = 0,
+    sawariCashUsed = 0,
     totalAmount = 0,
     bookingAmountPaid = 0,
     amountReceivedNow = 0,
@@ -322,7 +323,7 @@ const BillSummaryCard = ({ billSummary }) => {
 
   // This is the ONLY number we call a "total" on screen — everything
   // else either builds up to it (items) or subtracts from it (payments).
-  const billAmount = totalAmount || subtotal - discountAmount;
+  const billAmount = totalAmount || subtotal - discountAmount - sawariCashUsed;
 
   const paidNow = totalCollected || amountReceivedNow;
   const totalPaid = bookingAmountPaid + paidNow;
@@ -422,14 +423,14 @@ const BillSummaryCard = ({ billSummary }) => {
 
             {bookingAmountPaid > 0 && (
               <BillLineRow
-                label="Advance Paid Earlier"
+                label={`Advance Paid Earlier\n${(bookingPaymentMethod === "phonepe" || bookingPaymentMethod === "mixed") && bookingCreatedAt ? new Date(bookingCreatedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : ""}`}
                 value={`- ${currency(bookingAmountPaid)}`}
                 color={COLORS.green}
               />
             )}
             {paidNow > 0 && (
               <BillLineRow
-                label="Total amount paid"
+                label={`Total amount paid\n${(handoverPaymentMethod === "phonepe" || handoverPaymentMethod === "mixed") && handoverCreatedAt ? new Date(handoverCreatedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : ""}`}
                 value={`- ${currency(paidNow)}`}
                 color={COLORS.green}
               />
@@ -697,7 +698,13 @@ export default function VehicleReturnDetailsScreen() {
         </SectionCard>
 
         {/* Bill Summary (from handover.payment.billSummary) */}
-        <BillSummaryCard billSummary={billSummary} />
+        <BillSummaryCard 
+          billSummary={billSummary} 
+          handoverCreatedAt={details.handover?.createdAt} 
+          handoverPaymentMethod={details.handover?.payment?.paymentMethod} 
+          bookingCreatedAt={details.handover?.bookingId?.createdAt}
+          bookingPaymentMethod={details.handover?.bookingId?.payment?.paymentMethod}
+        />
 
         {/* Settlement Details */}
         <SectionCard icon="wallet" title="Settlement Details">

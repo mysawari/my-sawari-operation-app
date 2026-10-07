@@ -1,4 +1,5 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { Picker } from "@react-native-picker/picker";
 import * as Clipboard from "expo-clipboard";
 import * as ImagePicker from "expo-image-picker";
@@ -210,10 +211,31 @@ export default function ReceiveCarDetailScreen() {
   const [paymentMode, setPaymentMode] = useState("Cash");
 
   // Single source of truth for UPI transaction references (array of
-  // 4-digit strings).
   const [upiReferences, setUpiReferences] = useState([]);
   const [upiInput, setUpiInput] = useState("");
   const [showUpiModal, setShowUpiModal] = useState(false);
+
+  // Custom Payment Date/Time
+  const [paymentDate, setPaymentDate] = useState(() => new Date());
+  const [paymentTime, setPaymentTime] = useState(() => new Date());
+  const [showPicker, setShowPicker] = useState(false);
+  const [pickerMode, setPickerMode] = useState("date");
+  const [currentPickerTarget, setCurrentPickerTarget] = useState(null);
+  const [pickerDateValue, setPickerDateValue] = useState(new Date());
+
+  const onPickerChange = (event, selectedDate) => {
+    if (Platform.OS === "android") {
+      setShowPicker(false);
+    }
+    if (event.type === "dismissed" || !selectedDate) return;
+    setPickerDateValue(selectedDate);
+    
+    if (currentPickerTarget === "paymentDate") {
+      setPaymentDate(selectedDate);
+    } else if (currentPickerTarget === "paymentTime") {
+      setPaymentTime(selectedDate);
+    }
+  };
 
   // Mixed-payment breakdown fields
   const [cashAmount, setCashAmount] = useState("");
@@ -1348,22 +1370,14 @@ export default function ReceiveCarDetailScreen() {
 
                   {upiReferences.length > 0 && (
                     <View style={styles.upiList}>
-                      {upiReferences.map((reference, index) => (
-                        <View
-                          key={`${reference}-${index}`}
-                          style={styles.upiReferenceItem}
-                        >
-                          <Text style={styles.upiReferenceText}>
-                            UPI •••• {reference}
-                          </Text>
+                      {upiReferences.map((ref, idx) => (
+                        <View key={idx} style={styles.upiPill}>
+                          <Text style={styles.upiPillText}>{ref}</Text>
                           <TouchableOpacity
-                            onPress={() => removeUpiReference(index)}
+                            onPress={() => removeUpiReference(idx)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                           >
-                            <Ionicons
-                              name="close-circle"
-                              size={18}
-                              color="#DC2626"
-                            />
+                            <Ionicons name="close" size={16} color="#475569" />
                           </TouchableOpacity>
                         </View>
                       ))}
@@ -1371,9 +1385,49 @@ export default function ReceiveCarDetailScreen() {
                   )}
 
                   <Text style={styles.upiInputHint}>
-                    Enter the last 4 digits of the customer's UPI
+                    Enter the last 4 digits of the customer&apos;s UPI
                     transaction/reference ID.
                   </Text>
+                </View>
+              )}
+
+              {/* Payment Date & Time Picker */}
+              {(paymentMode === "PhonePe" || paymentMode === "Mixed") && (
+                <View style={{ flexDirection: "row", gap: 12, marginTop: 16 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabel}>Payment Date</Text>
+                    <TouchableOpacity
+                      style={[styles.inputBox, { height: 48 }]}
+                      onPress={() => {
+                        setPickerMode("date");
+                        setCurrentPickerTarget("paymentDate");
+                        setPickerDateValue(paymentDate);
+                        setShowPicker(true);
+                      }}
+                    >
+                      <Ionicons name="calendar-outline" size={18} color="#94A3B8" style={{ marginRight: 6 }} />
+                      <Text style={[styles.textInputField, { flex: 1, paddingVertical: 0 }]}>
+                        {paymentDate.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabel}>Payment Time</Text>
+                    <TouchableOpacity
+                      style={[styles.inputBox, { height: 48 }]}
+                      onPress={() => {
+                        setPickerMode("time");
+                        setCurrentPickerTarget("paymentTime");
+                        setPickerDateValue(paymentTime);
+                        setShowPicker(true);
+                      }}
+                    >
+                      <Ionicons name="time-outline" size={18} color="#94A3B8" style={{ marginRight: 6 }} />
+                      <Text style={[styles.textInputField, { flex: 1, paddingVertical: 0 }]}>
+                        {paymentTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
 
@@ -1562,6 +1616,46 @@ export default function ReceiveCarDetailScreen() {
             )}
           </TouchableOpacity>
         </View>
+
+        {/* Date/Time Picker Modal */}
+        {showPicker && (
+          Platform.OS === "ios" ? (
+            <Modal transparent animationType="slide">
+              <View style={styles.modalOverlay}>
+                <View style={styles.modalCard}>
+                  <View style={styles.modalHeader}>
+                    <TouchableOpacity onPress={() => setShowPicker(false)}>
+                      <Text style={{ color: "#64748B", fontWeight: "600" }}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (currentPickerTarget === "paymentDate") setPaymentDate(pickerDateValue);
+                        else if (currentPickerTarget === "paymentTime") setPaymentTime(pickerDateValue);
+                        setShowPicker(false);
+                      }}
+                    >
+                      <Text style={{ color: "#1D4ED8", fontWeight: "700" }}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <DateTimePicker
+                    value={pickerDateValue}
+                    mode={pickerMode}
+                    display="spinner"
+                    onChange={onPickerChange}
+                  />
+                </View>
+              </View>
+            </Modal>
+          ) : (
+            <DateTimePicker
+              value={pickerDateValue}
+              mode={pickerMode}
+              is24Hour={false}
+              display="default"
+              onChange={onPickerChange}
+            />
+          )
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

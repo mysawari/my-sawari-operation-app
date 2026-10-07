@@ -124,6 +124,7 @@ export default function EditRentalScreen() {
   const [securityDeposit, setSecurityDeposit] = useState("0");
   const [extraCharges, setExtraCharges] = useState("0");
   const [discountAmount, setDiscountAmount] = useState("0");
+  const [sawariCashUsed, setSawariCashUsed] = useState("0");
   const [amountReceivedNow, setAmountReceivedNow] = useState("0");
   const [reasonForChange, setReasonForChange] = useState("");
 
@@ -232,21 +233,23 @@ export default function EditRentalScreen() {
   const fastag = parseFloat(fastagPayable) || 0;
   const deposit = parseFloat(securityDeposit) || 0;
   const extra = parseFloat(extraCharges) || 0;
-  const discount = parseFloat(discountAmount) || 0;
-  const currentReceived = parseFloat(amountReceivedNow) || 0;
-  const currentRefund = parseFloat(amountRefundedNow) || 0;
+    const discount = parseFloat(discountAmount) || 0;
+    const sawariCash = parseFloat(sawariCashUsed) || 0;
+    const currentReceived = parseFloat(amountReceivedNow) || 0;
+    const currentRefund = parseFloat(amountRefundedNow) || 0;
 
-  const liveBillSummary = useMemo(() => {
-    const totalAmount = Math.max(
-      0,
-      liveTotalFare +
-        fastag +
-        pickupCharge +
-        dropCharge +
-        deposit +
-        extra -
-        discount,
-    );
+    const liveBillSummary = useMemo(() => {
+      const totalAmount = Math.max(
+        0,
+        liveTotalFare +
+          fastag +
+          pickupCharge +
+          dropCharge +
+          deposit +
+          extra -
+          discount -
+          sawariCash,
+      );
 
     const amountReceivedNowCumulative =
       amountReceivedPreviously + currentReceived;
@@ -276,6 +279,7 @@ export default function EditRentalScreen() {
       securityDeposit: deposit,
       extraCharges: extra,
       discountAmount: discount,
+      sawariCashUsed: sawariCash,
       totalAmount,
       bookingAmountPaid,
       amountReceivedNow: amountReceivedNowCumulative,

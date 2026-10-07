@@ -522,6 +522,7 @@ export default function HandoverDetails() {
 
   const totalDeductions =
     (bill.discountAmount || 0) +
+    (bill.sawariCashUsed || 0) +
     (bill.bookingAmountPaid || 0) +
     (bill.amountReceivedNow || 0);
 
@@ -720,7 +721,24 @@ export default function HandoverDetails() {
                 {/* ── STEP 3: DEDUCT from the Total Amount above ── */}
                 {bill.bookingAmountPaid > 0 && (
                   <View style={styles.billLineRow}>
-                    <Text style={styles.billLineLabel}>Advance Paid</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.billLineLabel}>
+                        Advance Paid
+                      </Text>
+                      {(booking?.payment?.paymentMethod === "phonepe" || booking?.payment?.paymentMethod === "mixed") && booking?.createdAt && (
+                        <Text style={{ fontSize: 10, color: "#94A3B8", marginTop: 2 }}>
+                          {new Date(booking.createdAt).toLocaleString("en-IN", {
+                            timeZone: "Asia/Kolkata",
+                            day: "2-digit",
+                            month: "short",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: true,
+                          })}
+                        </Text>
+                      )}
+                    </View>
                     <Text style={[styles.billLineValue, styles.paidText]}>
                       − {formatINR(bill.bookingAmountPaid)}
                     </Text>
@@ -738,11 +756,37 @@ export default function HandoverDetails() {
                   </View>
                 )}
 
+                {bill.sawariCashUsed > 0 && (
+                  <View style={styles.billLineRow}>
+                    <Text style={[styles.billLineLabel, styles.discountText]}>
+                      Sawari Cash Used
+                    </Text>
+                    <Text style={[styles.billLineValue, styles.discountText]}>
+                      − {formatINR(bill.sawariCashUsed)}
+                    </Text>
+                  </View>
+                )}
+
                 {bill.amountReceivedNow > 0 && (
                   <View style={styles.billLineRow}>
-                    <Text style={styles.billLineLabel}>
-                      Received at Handover
-                    </Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.billLineLabel}>
+                        Received at Handover
+                      </Text>
+                      {(handover?.payment?.paymentMethod === "phonepe" || handover?.payment?.paymentMethod === "mixed") && handover?.createdAt && (
+                        <Text style={{ fontSize: 10, color: "#94A3B8", marginTop: 2 }}>
+                          {new Date(handover.createdAt).toLocaleString("en-IN", {
+                            timeZone: "Asia/Kolkata",
+                            day: "2-digit",
+                            month: "short",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: true,
+                          })}
+                        </Text>
+                      )}
+                    </View>
                     <Text style={[styles.billLineValue, styles.paidText]}>
                       − {formatINR(bill.amountReceivedNow)}
                     </Text>

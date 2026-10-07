@@ -75,6 +75,7 @@ export default function BookingDetailsScreen() {
   const [aadharCard, setAadharCard] = useState("");
   const [dlNumber, setDlNumber] = useState("");
   const [discount, setDiscount] = useState("");
+  const [sawariCashUsed, setSawariCashUsed] = useState("");
   const [bookingAmount, setBookingAmount] = useState("");
   const [securityDeposit, setSecurityDeposit] = useState("");
   const [fastagBalance, setFastagBalance] = useState("");
@@ -230,6 +231,7 @@ export default function BookingDetailsScreen() {
         // Pricing fields live under the nested `payment` object
         setBookingAmount(String(data.payment?.bookingAmountPaid || ""));
         setDiscount(String(data.payment?.discountAmount || ""));
+        setSawariCashUsed(String(data.payment?.sawariCashUsed || ""));
         setSecurityDeposit(String(data.payment?.securityDeposit || ""));
         setFastagBalance(String(data.payment?.fastagAmount || ""));
 
@@ -469,6 +471,7 @@ export default function BookingDetailsScreen() {
           fastagAmount,
           totalAmount,
           discountAmount: Number(discount || 0),
+          sawariCashUsed: Number(sawariCashUsed || 0),
           securityDeposit: Number(securityDeposit || 0),
           bookingAmountPaid: Number(bookingAmount || 0),
           paymentMethod,
@@ -540,12 +543,13 @@ export default function BookingDetailsScreen() {
   const rentalAmount = vehicleAmount + serviceAmount + fastagAmount;
 
   const discountAmount = Number(discount || 0);
+  const sawariCashAmount = Number(sawariCashUsed || 0);
   const bookingAdvance = Number(bookingAmount || 0);
   const securityAmount = Number(securityDeposit || 0);
 
   const finalAmount = Math.max(rentalAmount, 0);
   const balanceAmount = Math.max(
-    finalAmount - bookingAdvance - discountAmount,
+    finalAmount - bookingAdvance - discountAmount - sawariCashAmount,
     0,
   );
   const totalCollected = bookingAdvance + securityAmount;
@@ -1338,13 +1342,28 @@ export default function BookingDetailsScreen() {
 
                   {bookingAdvance > 0 && (
                     <View style={styles.invoiceRow}>
-                      <Text style={styles.invoiceLabel}>
-                        Advance Paid ({paymentLabel}
-                        {paymentMethod === "phonepe" && upiLast4
-                          ? ` •••• ${upiLast4}`
-                          : ""}
-                        )
-                      </Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.invoiceLabel}>
+                          Advance Paid ({paymentLabel}
+                          {paymentMethod === "phonepe" && upiLast4
+                            ? ` •••• ${upiLast4}`
+                            : ""}
+                          )
+                        </Text>
+                        {(paymentMethod === "phonepe" || paymentMethod === "mixed") && (booking?.payment?.customPaymentDate || booking?.createdAt) && (
+                          <Text style={{ fontSize: 10, color: "#94A3B8", marginTop: 2 }}>
+                            {new Date(booking?.payment?.customPaymentDate || booking.createdAt).toLocaleString("en-IN", {
+                              timeZone: "Asia/Kolkata",
+                              day: "2-digit",
+                              month: "short",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              hour12: true,
+                            })}
+                          </Text>
+                        )}
+                      </View>
                       <Text style={[styles.invoiceValue, { color: "#16A34A" }]}>
                         − ₹{bookingAdvance.toLocaleString()}
                       </Text>
@@ -1356,6 +1375,15 @@ export default function BookingDetailsScreen() {
                       <Text style={styles.invoiceLabel}>Discount</Text>
                       <Text style={[styles.invoiceValue, { color: "#16A34A" }]}>
                         − ₹{discountAmount.toLocaleString()}
+                      </Text>
+                    </View>
+                  )}
+
+                  {sawariCashAmount > 0 && (
+                    <View style={styles.invoiceRow}>
+                      <Text style={styles.invoiceLabel}>Sawari Cash Used</Text>
+                      <Text style={[styles.invoiceValue, { color: "#16A34A" }]}>
+                        − ₹{sawariCashAmount.toLocaleString()}
                       </Text>
                     </View>
                   )}

@@ -88,6 +88,8 @@ export default function CreateBookingScreen() {
   const [bookingAmount, setBookingAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("phonepe");
   const [upiLast4, setUpiLast4] = useState("");
+  const [paymentDate, setPaymentDate] = useState(() => new Date());
+  const [paymentTime, setPaymentTime] = useState(() => new Date());
   const [residents, setResidents] = useState("1");
   const [securityDeposit, setSecurityDeposit] = useState("");
 
@@ -283,6 +285,13 @@ export default function CreateBookingScreen() {
     const month = String(dateObj.getMonth() + 1).padStart(2, "0");
     const day = String(dateObj.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
+  };
+
+  const combinePaymentDateTime = (dateObj, timeObj) => {
+    if (!dateObj || !timeObj) return new Date();
+    const result = new Date(dateObj);
+    result.setHours(timeObj.getHours(), timeObj.getMinutes(), 0, 0);
+    return result;
   };
 
   // True if the given "DD-MMM-YYYY" string is strictly before today
@@ -636,6 +645,9 @@ export default function CreateBookingScreen() {
 
         setTotalDays(String(days));
       }
+      if (currentPickerTarget === "paymentDate") {
+        setPaymentDate(selectedDate);
+      }
     } else {
       // 12-Hour standard string formatting with AM/PM
       let hours = selectedDate.getHours();
@@ -682,6 +694,9 @@ export default function CreateBookingScreen() {
           );
           setTotalDays(String(days));
         }
+      }
+      if (currentPickerTarget === "paymentTime") {
+        setPaymentTime(selectedDate);
       }
     }
   };
@@ -754,6 +769,7 @@ export default function CreateBookingScreen() {
         securityDeposit: Number(securityDeposit) || 0,
         paymentMethod,
         upiLast4: paymentMethod === "phonepe" ? upiLast4 : "",
+        customPaymentDate: paymentMethod === "phonepe" ? combinePaymentDateTime(paymentDate, paymentTime) : null,
         fastagBalance: Number(fastagBalance) || 0,
         residents: Number(residents) || 1,
         fromDate: formatToBackendDate(pickupDate),
@@ -1321,6 +1337,41 @@ export default function CreateBookingScreen() {
                   keyboardType="number-pad"
                   maxLength={4}
                 />
+
+                <View style={{ flexDirection: "row", gap: 12, marginTop: 12 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.label}>Payment Date</Text>
+                    <TouchableOpacity
+                      style={[styles.input, { flexDirection: "row", alignItems: "center", gap: 8, height: 48, paddingVertical: 0 }]}
+                      onPress={() => {
+                        setPickerMode("date");
+                        setCurrentPickerTarget("paymentDate");
+                        setPickerDateValue(paymentDate);
+                        setShowPicker(true);
+                      }}
+                    >
+                      <Ionicons name="calendar-outline" size={18} color="#64748B" />
+                      <Text style={{ fontSize: 15, color: "#1E293B", fontWeight: "500" }}>{formatLocalDate(paymentDate)}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.label}>Payment Time</Text>
+                    <TouchableOpacity
+                      style={[styles.input, { flexDirection: "row", alignItems: "center", gap: 8, height: 48, paddingVertical: 0 }]}
+                      onPress={() => {
+                        setPickerMode("time");
+                        setCurrentPickerTarget("paymentTime");
+                        setPickerDateValue(paymentTime);
+                        setShowPicker(true);
+                      }}
+                    >
+                      <Ionicons name="time-outline" size={18} color="#64748B" />
+                      <Text style={{ fontSize: 15, color: "#1E293B", fontWeight: "500" }}>
+                        {paymentTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
               </>
             )}
           </View>

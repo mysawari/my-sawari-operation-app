@@ -32,11 +32,15 @@ const { width: SCREEN_WIDTH } = Dimensions.get("window");
 /*  ADD DROP (team leaders only)                                           */
 /*                                                                         */
 /*  The leader taps "Add Drop" on a card → popup → location, landmark,     */
-/*  date, reach time and driver → saved as a "drop" task in the           */
-/*  ServiceTask collection (POST /service/drop-task).                     */
+/*  date, reach time, DROP PRICE and driver → saved as a "drop" task in   */
+/*  the ServiceTask collection (POST /service/drop-task).                 */
+/*                                                                         */
+/*  NEW: the drop price is also written into the handover bill            */
+/*  (payment.billSummary.dropCharge). The backend sends back the new      */
+/*  bill, and the card's "Due" badge updates right away.                  */
+/*                                                                         */
 /*  The driver then tracks it in the Pickup & Drop screen (My Tasks):     */
-/*  Start → I've Reached → Complete. Nothing about it is shown on this    */
-/*  card, and no payment is changed.                                      */
+/*  Start → I've Reached → Complete.                                       */
 /* ====================================================================== */
 
 // Must match LEADER_ROLES in backend serviceTaskController.js
@@ -61,9 +65,13 @@ const isTeamLeader = () => {
 // Module level, so it survives leaving / re-entering the screen.
 const dropCache = {};
 
-// A drop can be changed only before the driver starts the trip
-const isChangeable = (task) =>
-  !!task && ["pending", "assigned"].includes(task.status);
+// Any drop that isn't cancelled can be changed by the team
+// (also after the driver started or finished it)
+const isChangeable = (task) => !!task && task.status !== "cancelled";
+
+// Drop price limits (whole rupees)
+const MAX_DROP_CHARGE = 100000;
+const DROP_PRICE_CHIPS = [0, 200, 300, 500, 1000];
 
 const BASE_TABS = [
   { id: "today", label: "Due Today" },
@@ -173,6 +181,52 @@ const buildLocalPreview = (tab, term) => {
   }
   return [];
 };
+
+/* ---------------------------------------------------------------------- */
+/*  BILL HELPERS (NEW)                                                     */
+/*  After a drop is saved, the backend returns the handover's new bill.   */
+/*  We patch that card in every cache so the "Due" badge is right on      */
+/*  every tab and in every saved search — no refetch needed.              */
+/* ---------------------------------------------------------------------- */
+const getPaymentStatus = (bs) => {
+  const balance = Number(bs.balanceAmount || 0);
+  if (balance <= 0) return "paid";
+  return Number(bs.bookingAmountPaid || 0) > 0 ||
+    Number(bs.amountReceivedNow || 0) > 0
+    ? "partial"
+    : "pending";
+};
+
+const applyBillToCard = (card, bill) => {
+  if (!bill) return card;
+  const billSummary = {
+    ...(card.billSummary || {}),
+    ...(bill.billSummary || {}),
+  };
+  return {
+    ...card,
+    billSummary,
+    balanceAmount: Number(billSummary.balanceAmount || 0),
+    paymentStatus: bill.paymentStatus || getPaymentStatus(billSummary),
+    dropCharge: Number(
+      bill.dropCharge ?? billSummary.dropCharge ?? card.dropCharge ?? 0,
+    ),
+  };
+};
+
+const patchCardInCaches = (handoverId, bill) => {
+  const patch = (entry) => {
+    if (!entry?.items?.length) return;
+    if (!entry.items.some((c) => c.id === handoverId)) return;
+    entry.items = entry.items.map((c) =>
+      c.id === handoverId ? applyBillToCard(c, bill) : c,
+    );
+  };
+  Object.values(screenCache.tabs).forEach(patch);
+  searchCache.forEach(patch);
+};
+
+const formatRupees = (n) => `₹${Number(n || 0).toLocaleString("en-IN")}`;
 
 // Utility: Format Date Time
 const formatDateTime = (dateObj) => {
@@ -384,15 +438,15 @@ function mapRawHandoverToCard(item) {
 
   const billSummary = item.payment?.billSummary || item.billSummary || {};
   const balanceAmount = Number(billSummary.balanceAmount || 0);
-  const paymentStatus =
-    balanceAmount > 0
-      ? billSummary.bookingAmountPaid > 0 || billSummary.amountReceivedNow > 0
-        ? "partial"
-        : "pending"
-      : "paid";
+  const paymentStatus = getPaymentStatus(billSummary);
 
   const dropLocation =
     item.dropLocation || item.bookingId?.drop?.location || "-";
+
+  // CHANGED: the bill is the source of truth for the drop price
+  const dropCharge = Number(
+    billSummary.dropCharge || item.payment?.dropCharge || item.dropCharge || 0,
+  );
 
   const name =
     item.vehicle?.vehicleId?.vehicleName ||
@@ -444,7 +498,7 @@ function mapRawHandoverToCard(item) {
     paymentStatus,
     billSummary,
     dropLocation,
-    dropCharge: Number(item.dropCharge || 0),
+    dropCharge,
     receivedBy: item.returnDetails?.receivedBy?.fullName || "-",
     receivedByRole: item.returnDetails?.receivedBy?.role || "-",
     receivingTime: item.returnDetails?.receivingTime || null,
@@ -484,11 +538,12 @@ function mapRawHandoverToCard(item) {
 //   Landmark       (optional)
 //   Date           (chips: next days)
 //   Reach time     (−1h  −15m  +15m  +1h)
+//   Drop price  ★  (NEW — ₹, can be 0)
 //   Driver         (team members list)
 //
 //   Saves → POST /service/drop-task  → a "drop" task in ServiceTask,
-//   already assigned. The driver tracks it in Pickup & Drop → My Tasks.
-//   No payment fields.
+//   already assigned, AND sets payment.billSummary.dropCharge on the
+//   handover. The response carries the new bill for the card.
 // ==========================================
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -512,6 +567,8 @@ function DropTaskModal({ visible, item, task, token, onClose, onSaved }) {
   const [landmark, setLandmark] = useState("");
   const [reachAt, setReachAt] = useState(new Date());
   const [driverId, setDriverId] = useState(null);
+  // NEW: drop price as text, so the field can be empty while typing
+  const [price, setPrice] = useState("");
 
   // Fill the form each time the popup opens
   useEffect(() => {
@@ -528,6 +585,11 @@ function DropTaskModal({ visible, item, task, token, onClose, onSaved }) {
     setAddress(task?.address || bookingAddress);
     setLandmark(task?.landmark || "");
     setDriverId(task?.assignedTo?._id || null);
+
+    // Price: the bill's drop charge (what the customer is billed now).
+    // Falls back to the task's saved price; empty for a fresh drop.
+    // Change Drop → this drop's own price; Add Drop → empty
+    setPrice(task ? String(Number(task.dropCharge) || 0) : "");
 
     let cancelled = false;
     setLoadingDrivers(true);
@@ -578,9 +640,46 @@ function DropTaskModal({ visible, item, task, token, onClose, onSaved }) {
   const shiftTime = (minutes) =>
     setReachAt((d) => new Date(d.getTime() + minutes * 60 * 1000));
 
+  // ---- Price: digits only, whole rupees ----
+  const onPriceChange = (text) => {
+    const digits = String(text || "")
+      .replace(/[^0-9]/g, "")
+      .slice(0, 6);
+    setPrice(digits.replace(/^0+(?=\d)/, "")); // "0500" → "500"
+  };
+
+  const priceValue = price === "" ? null : Number(price);
+  const priceValid =
+    priceValue !== null &&
+    Number.isFinite(priceValue) &&
+    priceValue >= 0 &&
+    priceValue <= MAX_DROP_CHARGE;
+
+  // ---- Bill preview: how the customer's due changes ----
+  // Price this drop already put on the bill (0 for a new drop)
+  const oldCharge = Number(task?.dropCharge || 0);
+  const billDrop = Number(item?.dropCharge || 0); // whole bill drop charge
+  const currentDue =
+    Number(item?.balanceAmount || 0) -
+    Number(item?.billSummary?.refundDue || 0);
+  const delta = priceValid ? priceValue - oldCharge : 0;
+  const rawNewDue = currentDue + delta;
+  const newDue = Math.max(0, rawNewDue);
+  const extraRefund = rawNewDue < 0 ? -rawNewDue : 0;
+
+  const canSave = !saving && !!driverId && !!address.trim() && priceValid;
+
   const handleSave = async () => {
     if (!address.trim()) {
       return Alert.alert("Drop location", "Please enter the drop location.");
+    }
+    if (!priceValid) {
+      return Alert.alert(
+        "Drop price",
+        priceValue !== null && priceValue > MAX_DROP_CHARGE
+          ? `Drop price can't be more than ${formatRupees(MAX_DROP_CHARGE)}.`
+          : "Please enter the drop price (enter 0 if it's free).",
+      );
     }
     if (!driverId) {
       return Alert.alert("Driver", "Please select a driver.");
@@ -591,21 +690,43 @@ function DropTaskModal({ visible, item, task, token, onClose, onSaved }) {
         "/service/drop-task",
         {
           bookingId: item.bookingId,
+          handoverId: item.id, // NEW: whose bill gets the drop charge
           address: address.trim(),
           landmark: landmark.trim(),
           scheduledAt: reachAt.toISOString(),
           assignedTo: driverId,
+          dropCharge: priceValue, // NEW
         },
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (!res.data?.success) {
         throw new Error(res.data?.message || "Unable to save the drop.");
       }
-      onSaved?.(res.data.data); // card switches to "Change Drop"
-      Alert.alert(
-        isChange ? "Drop changed" : "Drop added",
-        "The driver can see it in Pickup & Drop → My Tasks.",
-      );
+
+      // data = drop task, bill = handover's new bill (NEW)
+      onSaved?.(res.data.data, res.data.bill, item.id);
+
+      const bill = res.data.bill;
+      const dueText = bill
+        ? Number(bill.billSummary?.balanceAmount ?? bill.balanceAmount ?? 0) > 0
+          ? `Customer due is now ${formatRupees(bill.billSummary?.balanceAmount ?? bill.balanceAmount)}.`
+          : Number(bill.billSummary?.refundDue ?? bill.refundDue ?? 0) > 0
+            ? `Refund due to customer: ${formatRupees(bill.billSummary?.refundDue ?? bill.refundDue)}.`
+            : "Bill is fully paid."
+        : "";
+
+      if (!bill) {
+        // Drop saved, but the bill was NOT changed — show the real reason
+        Alert.alert(
+          "Drop saved, bill NOT updated",
+          `${res.data?.message || "The server did not return a bill."}\n\nThe drop price was not added to the customer's bill.`,
+        );
+      } else {
+        Alert.alert(
+          isChange ? "Drop changed" : "Drop added",
+          `Drop price ${formatRupees(bill.dropCharge ?? priceValue)} is on the bill. ${dueText}\n\nThe driver can see it in Pickup & Drop → My Tasks.`,
+        );
+      }
       onClose();
     } catch (err) {
       Alert.alert(
@@ -646,6 +767,23 @@ function DropTaskModal({ visible, item, task, token, onClose, onSaved }) {
               <Ionicons name="close" size={20} color="#64748B" />
             </TouchableOpacity>
           </View>
+
+          {/* Drop already started / done: still editable, just a heads-up */}
+          {task &&
+            ["on_the_way", "reached", "completed"].includes(task.status) && (
+              <View style={modalStyles.statusNote}>
+                <Ionicons
+                  name="information-circle-outline"
+                  size={14}
+                  color="#1D4ED8"
+                />
+                <Text style={modalStyles.statusNoteText}>
+                  {task.status === "completed"
+                    ? "This drop is finished. You can still fix the location, time or price."
+                    : "The driver has started this drop. Choosing a different driver restarts it for them."}
+                </Text>
+              </View>
+            )}
 
           <FlatList
             data={loadingDrivers ? [] : drivers}
@@ -735,6 +873,103 @@ function DropTaskModal({ visible, item, task, token, onClose, onSaved }) {
                   ))}
                 </View>
 
+                {/* Drop price (NEW) */}
+                <Text style={modalStyles.fieldLabel}>Drop price *</Text>
+                <View
+                  style={[
+                    modalStyles.priceInputWrap,
+                    price !== "" && !priceValid && modalStyles.priceInputError,
+                  ]}
+                >
+                  <Text style={modalStyles.rupeePrefix}>₹</Text>
+                  <TextInput
+                    value={price}
+                    onChangeText={onPriceChange}
+                    placeholder="0"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="number-pad"
+                    returnKeyType="done"
+                    maxLength={6}
+                    style={modalStyles.priceInput}
+                  />
+                  {price !== "" && (
+                    <TouchableOpacity onPress={() => setPrice("")} hitSlop={10}>
+                      <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <View style={modalStyles.priceChipsRow}>
+                  {DROP_PRICE_CHIPS.map((p) => {
+                    const active = priceValue === p;
+                    return (
+                      <TouchableOpacity
+                        key={p}
+                        style={[
+                          modalStyles.dayChip,
+                          active && modalStyles.dayChipActive,
+                        ]}
+                        onPress={() => setPrice(String(p))}
+                      >
+                        <Text
+                          style={[
+                            modalStyles.dayChipText,
+                            active && modalStyles.dayChipTextActive,
+                          ]}
+                        >
+                          {p === 0 ? "Free" : formatRupees(p)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Bill preview (NEW) */}
+                {priceValid && (
+                  <View style={modalStyles.billPreview}>
+                    <View style={modalStyles.billRow}>
+                      <Text style={modalStyles.billLabel}>
+                        Drop charge on bill
+                      </Text>
+                      <Text style={modalStyles.billValue}>
+                        {delta !== 0 ? `${formatRupees(billDrop)} → ` : ""}
+                        {formatRupees(Math.max(0, billDrop + delta))}
+                      </Text>
+                    </View>
+                    <View style={modalStyles.billRow}>
+                      <Text style={modalStyles.billLabel}>Customer due</Text>
+                      <Text
+                        style={[
+                          modalStyles.billValue,
+                          { color: newDue > 0 ? "#DC2626" : "#16A34A" },
+                        ]}
+                      >
+                        {delta !== 0
+                          ? `${formatRupees(Math.max(0, currentDue))} → `
+                          : ""}
+                        {formatRupees(newDue)}
+                      </Text>
+                    </View>
+                    {extraRefund > 0 && (
+                      <View style={modalStyles.billRow}>
+                        <Text style={modalStyles.billLabel}>Refund due</Text>
+                        <Text
+                          style={[modalStyles.billValue, { color: "#D97706" }]}
+                        >
+                          {formatRupees(extraRefund)}
+                        </Text>
+                      </View>
+                    )}
+                    <Text style={modalStyles.billHint}>
+                      {delta > 0
+                        ? `+${formatRupees(delta)} added to the customer's due.`
+                        : delta < 0
+                          ? `${formatRupees(-delta)} taken off the customer's due.`
+                          : "No change to the bill."}
+                    </Text>
+                  </View>
+                )}
+
                 {/* Driver */}
                 <Text style={modalStyles.fieldLabel}>Driver *</Text>
                 {loadingDrivers && (
@@ -804,8 +1039,7 @@ function DropTaskModal({ visible, item, task, token, onClose, onSaved }) {
             <TouchableOpacity
               style={[
                 modalStyles.assignBtn,
-                (saving || !driverId || !address.trim()) &&
-                  modalStyles.assignBtnDisabled,
+                !canSave && modalStyles.assignBtnDisabled,
               ]}
               onPress={handleSave}
               disabled={saving}
@@ -815,6 +1049,7 @@ function DropTaskModal({ visible, item, task, token, onClose, onSaved }) {
               ) : (
                 <Text style={modalStyles.assignBtnText}>
                   {isChange ? "Save Changes" : "Add Drop"}
+                  {priceValid ? ` • ${formatRupees(priceValue)}` : ""}
                 </Text>
               )}
             </TouchableOpacity>
@@ -928,13 +1163,14 @@ const CarCard = memo(
 
     // Only team leaders, only for cars not yet received.
     //   no drop (or cancelled) → "Add Drop"
-    //   drop not started yet   → "Change Drop"
-    //   driver already started → small note, no button
+    //   any other drop         → "Change Drop" (even if started / done)
     const hasDrop = !!dropTask && dropTask.status !== "cancelled";
     const showDropButton = leader && !isCompleted;
-    const dropLocked = hasDrop && !isChangeable(dropTask);
     const hasBalance = item.balanceAmount > 0;
-    const hasDropLocation = item.dropLocation && item.dropLocation !== "-";
+    // A saved drop's address wins over the booking's drop location
+    const shownDropLocation =
+      (hasDrop && dropTask.address) || item.dropLocation;
+    const hasDropLocation = shownDropLocation && shownDropLocation !== "-";
     const hasPhone = !!item.phone && item.phone !== "-";
 
     const now = useNow(!isCompleted);
@@ -1070,42 +1306,26 @@ const CarCard = memo(
             {/* Team leader: Add Drop / Change Drop */}
             {showDropButton && (
               <View style={styles.driverAllocationRow}>
-                {dropLocked ? (
-                  // Driver already started — can't change from here
-                  <View style={styles.dropLockedNote}>
-                    <Ionicons
-                      name="checkmark-circle-outline"
-                      size={12}
-                      color="#16A34A"
-                    />
-                    <Text style={styles.dropLockedText}>
-                      {dropTask.status === "completed"
-                        ? "Drop done"
-                        : "Drop in progress"}
-                    </Text>
-                  </View>
-                ) : (
-                  <TouchableOpacity
-                    style={[
-                      styles.assignActionBtn,
-                      hasDrop && styles.changeDropBtn,
-                    ]}
-                    onPress={(e) => {
-                      e.stopPropagation?.();
-                      onOpenDropForm(item);
-                    }}
-                    activeOpacity={0.75}
-                  >
-                    <Ionicons
-                      name={hasDrop ? "create-outline" : "add-circle-outline"}
-                      size={12}
-                      color="#2563EB"
-                    />
-                    <Text style={styles.assignActionText}>
-                      {hasDrop ? "Change Drop" : "Add Drop"}
-                    </Text>
-                  </TouchableOpacity>
-                )}
+                <TouchableOpacity
+                  style={[
+                    styles.assignActionBtn,
+                    hasDrop && styles.changeDropBtn,
+                  ]}
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    onOpenDropForm(item);
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <Ionicons
+                    name={hasDrop ? "create-outline" : "add-circle-outline"}
+                    size={12}
+                    color="#2563EB"
+                  />
+                  <Text style={styles.assignActionText}>
+                    {hasDrop ? "Change Drop" : "Add Drop"}
+                  </Text>
+                </TouchableOpacity>
               </View>
             )}
 
@@ -1115,8 +1335,10 @@ const CarCard = memo(
                 <View style={styles.dropLocationBadge}>
                   <Ionicons name="location-outline" size={12} color="#92400E" />
                   <Text style={styles.dropLocationText} numberOfLines={1}>
-                    {item.dropLocation}
-                    {item.dropCharge > 0 ? ` (+₹${item.dropCharge})` : ""}
+                    {shownDropLocation}
+                    {item.dropCharge > 0
+                      ? ` (+${formatRupees(item.dropCharge)})`
+                      : ""}
                   </Text>
                 </View>
               )}
@@ -1144,7 +1366,7 @@ const CarCard = memo(
                   ]}
                 >
                   {hasBalance
-                    ? `Due: ₹${item.balanceAmount.toLocaleString("en-IN")}`
+                    ? `Due: ${formatRupees(item.balanceAmount)}`
                     : "Paid In Full"}
                 </Text>
               </View>
@@ -1525,11 +1747,20 @@ export default function ReceiveCarScreen() {
       });
   }, [items, leader, token]);
 
-  // After Add / Change in the popup → the card now shows "Change Drop"
-  const handleDropSaved = useCallback((task) => {
-    if (!task?.bookingId) return;
-    dropCache[task.bookingId] = task;
-    setDrops({ ...dropCache });
+  // After Add / Change in the popup:
+  //   • the card now shows "Change Drop"
+  //   • NEW: the card's bill (drop charge + due) updates everywhere
+  const handleDropSaved = useCallback((task, bill, handoverId) => {
+    if (task?.bookingId) {
+      dropCache[task.bookingId] = task;
+      setDrops({ ...dropCache });
+    }
+    if (bill && handoverId) {
+      patchCardInCaches(handoverId, bill);
+      setItems((prev) =>
+        prev.map((c) => (c.id === handoverId ? applyBillToCard(c, bill) : c)),
+      );
+    }
   }, []);
 
   useEffect(() => {
@@ -1883,7 +2114,7 @@ export default function ReceiveCarScreen() {
         </>
       )}
 
-      {/* Add Drop popup (team leader) → creates a drop task in ServiceTask */}
+      {/* Add Drop popup (team leader) → drop task + drop charge on the bill */}
       <DropTaskModal
         visible={!!dropFormFor}
         item={dropFormFor}
@@ -2247,24 +2478,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#EFF6FF",
     borderColor: "#BFDBFE",
   },
-  // "Drop in progress" / "Drop done" — not tappable
-  dropLockedNote: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    backgroundColor: "#F0FDF4",
-    borderWidth: 1,
-    borderColor: "#DCFCE7",
-  },
-  dropLockedText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#16A34A",
-  },
-
   // Location & Financial Badges
   badgeWrap: {
     flexDirection: "row",
@@ -2461,7 +2674,7 @@ const modalStyles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: Platform.OS === "ios" ? 34 : 20,
-    maxHeight: "80%",
+    maxHeight: "85%",
   },
   dragHandle: {
     width: 36,
@@ -2639,4 +2852,63 @@ const modalStyles = StyleSheet.create({
     borderColor: "#BFDBFE",
   },
   timeBtnText: { fontSize: 11, fontWeight: "700", color: "#2563EB" },
+
+  // Started / finished drop note
+  statusNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    padding: 10,
+    marginBottom: 4,
+    borderRadius: 10,
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  statusNoteText: { flex: 1, fontSize: 11, color: "#1E40AF", lineHeight: 16 },
+
+  // Drop price (NEW)
+  priceInputWrap: {
+    height: 46,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    backgroundColor: "#FFFFFF",
+  },
+  priceInputError: { borderColor: "#FCA5A5", backgroundColor: "#FEF2F2" },
+  rupeePrefix: { fontSize: 16, fontWeight: "800", color: "#0F172A" },
+  priceInput: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0F172A",
+    paddingVertical: 0,
+  },
+  priceChipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 8,
+  },
+  billPreview: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    gap: 4,
+  },
+  billRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  billLabel: { fontSize: 12, color: "#78350F", fontWeight: "600" },
+  billValue: { fontSize: 13, color: "#0F172A", fontWeight: "800" },
+  billHint: { fontSize: 10, color: "#92400E", marginTop: 2 },
 });

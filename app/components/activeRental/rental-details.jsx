@@ -200,7 +200,7 @@ export default function RentalDetailsScreen() {
   // ── Bill values — sourced entirely from payment.billSummary, which the
   // backend now always populates (falling back to flat payment fields only
   // for pre-billSummary documents). Nothing here is recalculated.
-  const bill = handover.payment?.billSummary || {};
+  const bill = handover.payment?.billSummary || handover.payment || {};
 
   const subtotal =
     (bill.totalFare || 0) +

@@ -442,7 +442,34 @@ export default function HandoverDetails() {
     );
   }
 
-  const bill = handover.payment?.billSummary || {};
+  const paymentObj = handover.payment || {};
+  const summaryObj = paymentObj.billSummary || {};
+  const bill = {
+    ...paymentObj,
+    ...summaryObj,
+    totalFare: summaryObj.totalFare || paymentObj.totalFare || 0,
+    pickupCharge: summaryObj.pickupCharge || paymentObj.pickupCharge || 0,
+    dropCharge: summaryObj.dropCharge || paymentObj.dropCharge || 0,
+    fastTagPayable:
+      summaryObj.fastTagPayable ||
+      paymentObj.fastTagPayableAmount ||
+      paymentObj.fastagAmount ||
+      0,
+    extraCharges: summaryObj.extraCharges || paymentObj.extraCharges || 0,
+    securityDeposit:
+      summaryObj.securityDeposit || paymentObj.securityDeposit || 0,
+    discountAmount: summaryObj.discountAmount || paymentObj.discountAmount || 0,
+    sawariCashUsed: summaryObj.sawariCashUsed || paymentObj.sawariCashUsed || 0,
+    bookingAmountPaid:
+      summaryObj.bookingAmountPaid || paymentObj.bookingAmountPaid || 0,
+    amountReceivedNow:
+      summaryObj.amountReceivedNow || paymentObj.amountReceivedNow || 0,
+    totalAmount: summaryObj.totalAmount || paymentObj.totalAmount || 0,
+    balanceAmount:
+      summaryObj.balanceAmount !== undefined
+        ? summaryObj.balanceAmount
+        : paymentObj.balanceAmount,
+  };
   const extensionSummary = handover.payment?.billSummary?.extensionSummary;
 
   const extensionBills = extensionSummary?.history || [];
@@ -642,13 +669,7 @@ export default function HandoverDetails() {
                     Vehicle Rent
                     {handover.trip?.numberOfDays > 0 && bill.totalFare > 0 && (
                       <Text style={styles.billLineSub}>
-                        {"  ("}
-                        {formatINR(
-                          Math.round(
-                            bill.totalFare / handover.trip.numberOfDays,
-                          ),
-                        )}
-                        {" × "}
+                        {"  (for "}
                         {handover.trip.numberOfDays}{" "}
                         {handover.trip.numberOfDays === 1 ? "day" : "days"}
                         {")"}
@@ -725,9 +746,9 @@ export default function HandoverDetails() {
                       <Text style={styles.billLineLabel}>
                         Advance Paid
                       </Text>
-                      {(booking?.payment?.paymentMethod === "phonepe" || booking?.payment?.paymentMethod === "mixed") && booking?.createdAt && (
+                      {(handover?.payment?.paymentMethod === "phonepe" || handover?.payment?.paymentMethod === "mixed") && handover?.createdAt && (
                         <Text style={{ fontSize: 10, color: "#94A3B8", marginTop: 2 }}>
-                          {new Date(booking.createdAt).toLocaleString("en-IN", {
+                          {new Date(handover.createdAt).toLocaleString("en-IN", {
                             timeZone: "Asia/Kolkata",
                             day: "2-digit",
                             month: "short",

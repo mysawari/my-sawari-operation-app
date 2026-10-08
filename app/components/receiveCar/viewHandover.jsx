@@ -235,7 +235,7 @@ export default function HandoverDetailsScreen() {
   const images = handoverData?.images;
 
   // Single source of truth for every money figure on this screen.
-  const billSummary = payment?.billSummary || null;
+  const billSummary = payment?.billSummary || payment || null;
 
   const pendingAmount = Number(billSummary?.balanceAmount || 0);
   const amountReceived = Number(

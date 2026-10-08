@@ -559,7 +559,7 @@ export default function VehicleReturnDetailsScreen() {
   const vehicle = details.vehicle || {};
   const handover = details.handover || {};
   const customer = handover.customer || {};
-  const billSummary = handover.payment?.billSummary || null;
+  const billSummary = handover.payment?.billSummary || handover.payment || null;
   const settlement = details.settlementDetails || {};
   const damage = details.damageCostDetails || {};
 

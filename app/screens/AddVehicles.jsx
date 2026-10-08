@@ -178,6 +178,12 @@ export default function AddVehicleScreen() {
   const [rearCamera, setRearCamera] = useState("");
   const [gps, setGps] = useState("");
 
+  // Bike specific
+  const [digitalDisplay, setDigitalDisplay] = useState("");
+  const [bikeAbs, setBikeAbs] = useState("");
+  const [discBrakes, setDiscBrakes] = useState("");
+  const [cbs, setCbs] = useState("");
+
   const [vehicleStatus, setVehicleStatus] = useState("available");
   const [notes, setNotes] = useState("");
 

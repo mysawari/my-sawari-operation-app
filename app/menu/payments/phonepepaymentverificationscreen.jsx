@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 
 import {
   ActivityIndicator,
@@ -637,6 +637,125 @@ const getCurrentUserName = async () => {
    SCREEN
 ========================================================= */
 
+const PaymentCardItem = React.memo(({ item, isCollecting, onCollect }) => {
+  const collected = Boolean(item?.isCollected);
+  const amount = getDisplayAmount(item);
+  const createdBy = getCreatedByName(item);
+  const upiList = Array.isArray(item?.upiLast4) ? item.upiLast4 : [];
+  const phone = item?.customer?.mobileNumber;
+
+  const subLine = [
+    getPaymentTypeLabel(item?.type),
+    item?.vehicle?.vehicleName,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const metaText = collected
+    ? `Verified by ${item?.lastCollectedByName || "Staff"} · Rec. by ${createdBy}`
+    : `Recorded by ${createdBy}`;
+
+  const actualPaymentDate = item?.customPaymentDate || item?.createdAt;
+  
+  const metaDate = formatDateTime(
+    collected ? item?.lastCollectedAt : actualPaymentDate,
+  );
+
+  return (
+    <View style={styles.paymentCard}>
+      <View style={styles.cardTopRow}>
+        <View
+          style={[styles.typeIcon, collected && styles.typeIconCollected]}
+        >
+          <Text
+            style={[
+              styles.typeIconText,
+              collected && styles.typeIconTextCollected,
+            ]}
+          >
+            {collected ? "✓" : getPaymentTypeIcon(item?.type)}
+          </Text>
+        </View>
+
+        <View style={styles.cardMain}>
+          <View style={styles.nameRow}>
+            <Text style={styles.nameText} numberOfLines={1}>
+              {item?.customer?.fullName || "Customer"}
+            </Text>
+
+            <Text style={styles.amountText}>{formatCurrency(amount)}</Text>
+          </View>
+
+          <Text style={styles.subText} numberOfLines={1}>
+            {subLine}
+          </Text>
+
+          {phone || upiList.length > 0 ? (
+            <View style={styles.contactRow}>
+              {phone ? (
+                <Text style={styles.phoneText} numberOfLines={1}>
+                  {phone}
+                </Text>
+              ) : null}
+
+              {upiList.length > 0 ? (
+                <View style={styles.upiInline}>
+                  <Text style={styles.upiLabel}>UPI</Text>
+
+                  {upiList.map((last4, index) => (
+                    <View key={`${last4}-${index}`} style={styles.upiBadge}>
+                      <Text style={styles.upiBadgeText}>{last4}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      </View>
+
+      <View style={styles.footerRow}>
+        <View style={styles.footerMeta}>
+          {item?.customPaymentDate && (
+            <Text style={[styles.footerDate, { color: "#1E3A8A", fontWeight: "600", marginBottom: 2 }]}>
+              Payment Date: {formatDateTime(item.customPaymentDate)}
+            </Text>
+          )}
+          <Text style={styles.footerMetaText} numberOfLines={1}>
+            {metaText}
+          </Text>
+
+          <Text style={styles.footerDate}>{metaDate}</Text>
+        </View>
+
+        {collected ? (
+          <View style={styles.verifiedBadge}>
+            <Text style={styles.verifiedBadgeText}>✓ Verified</Text>
+          </View>
+        ) : (
+          <Pressable
+            disabled={isCollecting}
+            onPress={() => onCollect(item)}
+            style={[
+              styles.verifyButton,
+              isCollecting && styles.verifyButtonDisabled,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Verify ${formatCurrency(amount)}`}
+          >
+            {isCollecting ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.verifyButtonText}>
+                {item?.paymentMethod === "razorpay" ? "Verify Razorpay" : "Verify PhonePe"}
+              </Text>
+            )}
+          </Pressable>
+        )}
+      </View>
+    </View>
+  );
+});
 const PhonePePaymentVerificationScreen = () => {
   /* =======================================================
      STATE
@@ -1406,10 +1525,10 @@ const PhonePePaymentVerificationScreen = () => {
         </Pressable>
 
         <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>PhonePe Verification</Text>
+          <Text style={styles.headerTitle}>UPI Verification</Text>
 
           <Text style={styles.headerSubtitle}>
-            Verify and reconcile PhonePe payments
+            Verify and reconcile PhonePe and Razorpay payments
           </Text>
         </View>
       </View>
@@ -1427,7 +1546,7 @@ const PhonePePaymentVerificationScreen = () => {
       <View style={styles.summaryContainer}>
         <View style={styles.summaryTopRow}>
           <View>
-            <Text style={styles.summaryTitle}>PhonePe Collection</Text>
+            <Text style={styles.summaryTitle}>UPI Collection</Text>
 
             <Text style={styles.summaryDate}>
               {SECTION_COPY[activeTab]?.title || "Overview"}
@@ -1551,126 +1670,13 @@ const PhonePePaymentVerificationScreen = () => {
 
   const renderPaymentItem = useCallback(
     ({ item }) => {
-      const collected = Boolean(item?.isCollected);
-
-      const amount = getDisplayAmount(item);
-
-      const createdBy = getCreatedByName(item);
-
       const isCollecting = collectingId === item?._id;
-
-      const upiList = Array.isArray(item?.upiLast4) ? item.upiLast4 : [];
-
-      const phone = item?.customer?.mobileNumber;
-
-      const subLine = [
-        getPaymentTypeLabel(item?.type),
-        item?.vehicle?.vehicleName,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-
-      const metaText = collected
-        ? `Verified by ${item?.lastCollectedByName || "Staff"} · Rec. by ${createdBy}`
-        : `Recorded by ${createdBy}`;
-
-      const actualPaymentDate = item?.customPaymentDate || item?.createdAt;
-      
-      const metaDate = formatDateTime(
-        collected ? item?.lastCollectedAt : actualPaymentDate,
-      );
-
       return (
-        <View style={styles.paymentCard}>
-          <View style={styles.cardTopRow}>
-            <View
-              style={[styles.typeIcon, collected && styles.typeIconCollected]}
-            >
-              <Text
-                style={[
-                  styles.typeIconText,
-                  collected && styles.typeIconTextCollected,
-                ]}
-              >
-                {collected ? "✓" : getPaymentTypeIcon(item?.type)}
-              </Text>
-            </View>
-
-            <View style={styles.cardMain}>
-              <View style={styles.nameRow}>
-                <Text style={styles.nameText} numberOfLines={1}>
-                  {item?.customer?.fullName || "Customer"}
-                </Text>
-
-                <Text style={styles.amountText}>{formatCurrency(amount)}</Text>
-              </View>
-
-              <Text style={styles.subText} numberOfLines={1}>
-                {subLine}
-              </Text>
-
-              {phone || upiList.length > 0 ? (
-                <View style={styles.contactRow}>
-                  {phone ? (
-                    <Text style={styles.phoneText} numberOfLines={1}>
-                      {phone}
-                    </Text>
-                  ) : null}
-
-                  {upiList.length > 0 ? (
-                    <View style={styles.upiInline}>
-                      <Text style={styles.upiLabel}>UPI</Text>
-
-                      {upiList.map((last4, index) => (
-                        <View key={`${last4}-${index}`} style={styles.upiBadge}>
-                          <Text style={styles.upiBadgeText}>{last4}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
-            </View>
-          </View>
-
-          <View style={styles.footerRow}>
-            <View style={styles.footerMeta}>
-              {item?.customPaymentDate && (
-                <Text style={[styles.footerDate, { color: "#1E3A8A", fontWeight: "600", marginBottom: 2 }]}>
-                  Payment Date: {formatDateTime(item.customPaymentDate)}
-                </Text>
-              )}
-              <Text style={styles.footerMetaText} numberOfLines={1}>
-                {metaText}
-              </Text>
-
-              <Text style={styles.footerDate}>{metaDate}</Text>
-            </View>
-
-            {collected ? (
-              <View style={styles.verifiedBadge}>
-                <Text style={styles.verifiedBadgeText}>✓ Verified</Text>
-              </View>
-            ) : (
-              <Pressable
-                disabled={isCollecting}
-                onPress={() => handleCollect(item)}
-                style={[
-                  styles.verifyButton,
-                  isCollecting && styles.verifyButtonDisabled,
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel={`Verify ${formatCurrency(amount)}`}
-              >
-                {isCollecting ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.verifyButtonText}>Verify</Text>
-                )}
-              </Pressable>
-            )}
-          </View>
-        </View>
+        <PaymentCardItem
+          item={item}
+          isCollecting={isCollecting}
+          onCollect={handleCollect}
+        />
       );
     },
     [collectingId, handleCollect],

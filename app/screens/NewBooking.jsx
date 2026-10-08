@@ -1010,7 +1010,7 @@ function NewBookingScreenInner() {
 
       // Only send filled, valid 4-digit UPI reference entries.
       const upiLast4Payload =
-        paymentMethod === "phonepe" || paymentMethod === "mixed"
+        paymentMethod === "phonepe" || paymentMethod === "razorpay" || paymentMethod === "mixed"
           ? upiLast4List
               .map((v) => (v || "").trim())
               .filter((v) => v.length === 4)
@@ -1850,9 +1850,11 @@ function NewBookingScreenInner() {
             ) : null}
 
             {/* ── UPI Last 4 Digits — supports multiple entries ── */}
-            {paymentMethod === "phonepe" || paymentMethod === "mixed" ? (
+            {paymentMethod === "phonepe" || paymentMethod === "razorpay" || paymentMethod === "mixed" ? (
               <View style={styles.inputContainer}>
-                <Text style={styles.label}>UPI Last 4 Digits</Text>
+                <Text style={styles.label}>
+                  {paymentMethod === "phonepe" ? "PhonePe" : paymentMethod === "razorpay" ? "Razorpay" : "UPI"} Last 4 Digits
+                </Text>
 
                 {upiLast4List.map((val, index) => {
                   const isLast = index === upiLast4List.length - 1;

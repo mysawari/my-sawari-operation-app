@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 
 import {
   ActivityIndicator,
@@ -666,6 +666,110 @@ const getCurrentUserName = async () => {
    SCREEN
 ========================================================= */
 
+const PaymentCardItem = React.memo(({ item, isCollecting, onCollect }) => {
+  const mixed = isMixedPayment(item);
+  const collected = Boolean(item?.isCollected);
+  const amount = getDisplayAmount(item);
+  const createdBy = getCreatedByName(item);
+  const phone = item?.customer?.mobileNumber;
+
+  const subLine = [
+    getPaymentTypeLabel(item?.type),
+    item?.vehicle?.vehicleName,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const metaText = collected
+    ? `Collected by ${item?.lastCollectedByName || "Staff"} from ${createdBy}`
+    : `Recorded by ${createdBy}`;
+
+  const metaDate = formatDateTime(
+    collected ? item?.lastCollectedAt : item?.createdAt,
+  );
+
+  return (
+    <View style={styles.paymentCard}>
+      <View style={styles.cardTopRow}>
+        <View
+          style={[styles.typeIcon, collected && styles.typeIconCollected]}
+        >
+          <Text
+            style={[
+              styles.typeIconText,
+              collected && styles.typeIconTextCollected,
+            ]}
+          >
+            {collected ? "✓" : getPaymentTypeIcon(item?.type)}
+          </Text>
+        </View>
+
+        <View style={styles.cardMain}>
+          <View style={styles.nameRow}>
+            <Text style={styles.nameText} numberOfLines={1}>
+              {item?.customer?.fullName || "Customer"}
+            </Text>
+
+            <Text style={styles.amountText}>{formatCurrency(amount)}</Text>
+          </View>
+
+          <Text style={styles.subText} numberOfLines={1}>
+            {subLine}
+          </Text>
+
+          {phone || mixed ? (
+            <View style={styles.contactRow}>
+              {phone ? (
+                <Text style={styles.phoneText} numberOfLines={1}>
+                  {phone}
+                </Text>
+              ) : null}
+
+              {mixed ? (
+                <View style={styles.mixedTag}>
+                  <Text style={styles.mixedTagText}>MIXED · CASH PART</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      </View>
+
+      <View style={styles.footerRow}>
+        <View style={styles.footerMeta}>
+          <Text style={styles.footerMetaText} numberOfLines={1}>
+            {metaText}
+          </Text>
+
+          <Text style={styles.footerDate}>{metaDate}</Text>
+        </View>
+
+        {collected ? (
+          <View style={styles.collectedBadge}>
+            <Text style={styles.collectedBadgeText}>✓ Collected</Text>
+          </View>
+        ) : (
+          <Pressable
+            disabled={isCollecting}
+            onPress={() => onCollect(item)}
+            style={[
+              styles.collectButton,
+              isCollecting && styles.collectButtonDisabled,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Collect ${formatCurrency(amount)}`}
+          >
+            {isCollecting ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.collectButtonText}>Collect</Text>
+            )}
+          </Pressable>
+        )}
+      </View>
+    </View>
+  );
+});
 const CashPaymentVerificationScreen = () => {
   /* =======================================================
      STATE
@@ -1616,113 +1720,13 @@ const CashPaymentVerificationScreen = () => {
 
   const renderPaymentItem = useCallback(
     ({ item }) => {
-      const mixed = isMixedPayment(item);
-
-      const collected = Boolean(item?.isCollected);
-
-      const amount = getDisplayAmount(item);
-
-      const createdBy = getCreatedByName(item);
-
       const isCollecting = collectingId === item?._id;
-
-      const phone = item?.customer?.mobileNumber;
-
-      const subLine = [
-        getPaymentTypeLabel(item?.type),
-        item?.vehicle?.vehicleName,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-
-      const metaText = collected
-        ? `Collected by ${item?.lastCollectedByName || "Staff"} from ${createdBy}`
-        : `Recorded by ${createdBy}`;
-
-      const metaDate = formatDateTime(
-        collected ? item?.lastCollectedAt : item?.createdAt,
-      );
-
       return (
-        <View style={styles.paymentCard}>
-          <View style={styles.cardTopRow}>
-            <View
-              style={[styles.typeIcon, collected && styles.typeIconCollected]}
-            >
-              <Text
-                style={[
-                  styles.typeIconText,
-                  collected && styles.typeIconTextCollected,
-                ]}
-              >
-                {collected ? "✓" : getPaymentTypeIcon(item?.type)}
-              </Text>
-            </View>
-
-            <View style={styles.cardMain}>
-              <View style={styles.nameRow}>
-                <Text style={styles.nameText} numberOfLines={1}>
-                  {item?.customer?.fullName || "Customer"}
-                </Text>
-
-                <Text style={styles.amountText}>{formatCurrency(amount)}</Text>
-              </View>
-
-              <Text style={styles.subText} numberOfLines={1}>
-                {subLine}
-              </Text>
-
-              {phone || mixed ? (
-                <View style={styles.contactRow}>
-                  {phone ? (
-                    <Text style={styles.phoneText} numberOfLines={1}>
-                      {phone}
-                    </Text>
-                  ) : null}
-
-                  {mixed ? (
-                    <View style={styles.mixedTag}>
-                      <Text style={styles.mixedTagText}>MIXED · CASH PART</Text>
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
-            </View>
-          </View>
-
-          <View style={styles.footerRow}>
-            <View style={styles.footerMeta}>
-              <Text style={styles.footerMetaText} numberOfLines={1}>
-                {metaText}
-              </Text>
-
-              <Text style={styles.footerDate}>{metaDate}</Text>
-            </View>
-
-            {collected ? (
-              <View style={styles.collectedBadge}>
-                <Text style={styles.collectedBadgeText}>✓ Collected</Text>
-              </View>
-            ) : (
-              <Pressable
-                disabled={isCollecting}
-                onPress={() => handleCollect(item)}
-                style={[
-                  styles.collectButton,
-                  isCollecting && styles.collectButtonDisabled,
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel={`Collect ${formatCurrency(amount)}`}
-              >
-                {isCollecting ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.collectButtonText}>Collect</Text>
-                )}
-              </Pressable>
-            )}
-          </View>
-        </View>
+        <PaymentCardItem
+          item={item}
+          isCollecting={isCollecting}
+          onCollect={handleCollect}
+        />
       );
     },
     [collectingId, handleCollect],

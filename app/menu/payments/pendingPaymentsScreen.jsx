@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, memo } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -62,7 +62,7 @@ const isYesterday = (date) => {
     d.getFullYear() === yesterday.getFullYear();
 };
 
-const PendingPaymentCard = ({ payment }) => {
+const PendingPaymentCard = memo(({ payment }) => {
   const method = String(payment.paymentMethod || "").toUpperCase();
   const type = String(payment.type || "PAYMENT").toUpperCase();
   const customerName = payment?.customer?.fullName || "Customer";
@@ -104,7 +104,7 @@ const PendingPaymentCard = ({ payment }) => {
       </View>
     </View>
   );
-};
+});
 
 const FILTER_TYPES = [
   { key: "all", label: "All Types" },

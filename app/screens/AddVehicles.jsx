@@ -242,6 +242,11 @@ export default function AddVehicleScreen() {
       formData.append("rearCamera", rearCamera || "");
       formData.append("gps", gps || "");
 
+      formData.append("digitalDisplay", digitalDisplay || "");
+      formData.append("bikeAbs", bikeAbs || "");
+      formData.append("discBrakes", discBrakes || "");
+      formData.append("cbs", cbs || "");
+
       formData.append("notes", notes || "");
       formData.append("status", vehicleStatus);
 

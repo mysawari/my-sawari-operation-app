@@ -394,7 +394,7 @@ export default function BookingDetailsScreen() {
     if (dropDateObj.getTime() < pickupDateObj.getTime()) {
       return alert("Drop date cannot be before pickup date");
     }
-    if (paymentMethod === "phonepe" && upiLast4 && upiLast4.length !== 4) {
+    if ((paymentMethod === "phonepe" || paymentMethod === "razorpay") && upiLast4 && upiLast4.length !== 4) {
       return alert("UPI last 4 digits must be exactly 4 numbers");
     }
 
@@ -420,7 +420,7 @@ export default function BookingDetailsScreen() {
       const totalAmount =
         vehicleRent + appliedPickupCharge + appliedDropCharge + fastagAmount;
 
-      const finalUpiLast4 = paymentMethod === "phonepe" ? upiLast4 : "";
+      const finalUpiLast4 = (paymentMethod === "phonepe" || paymentMethod === "razorpay") ? upiLast4 : "";
 
       const payload = {
         customerName,
@@ -1345,7 +1345,7 @@ export default function BookingDetailsScreen() {
                       <View style={{ flex: 1 }}>
                         <Text style={styles.invoiceLabel}>
                           Advance Paid ({paymentLabel}
-                          {paymentMethod === "phonepe" && upiLast4
+                          {(paymentMethod === "phonepe" || paymentMethod === "razorpay") && upiLast4
                             ? ` •••• ${upiLast4}`
                             : ""}
                           )

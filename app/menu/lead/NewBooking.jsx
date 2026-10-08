@@ -1322,7 +1322,7 @@ export default function CreateBookingScreen() {
               </TouchableOpacity>
             </View>
 
-            {paymentMethod === "phonepe" && (
+            {(paymentMethod === "phonepe" || paymentMethod === "razorpay") && (
               <>
                 <Text style={styles.label}>UPI Last 4 Digits</Text>
 

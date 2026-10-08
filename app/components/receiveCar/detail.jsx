@@ -227,7 +227,7 @@ export default function ReceiveCarDetailScreen() {
     if (Platform.OS === "android") {
       setShowPicker(false);
     }
-    if (event.type === "dismissed" || !selectedDate) return;
+    if (!selectedDate) return;
     setPickerDateValue(selectedDate);
     
     if (currentPickerTarget === "paymentDate") {
@@ -1641,7 +1641,8 @@ export default function ReceiveCarDetailScreen() {
                     value={pickerDateValue}
                     mode={pickerMode}
                     display="spinner"
-                    onChange={onPickerChange}
+                    onValueChange={onPickerChange}
+                    onDismiss={() => setShowPicker(false)}
                   />
                 </View>
               </View>
@@ -1652,7 +1653,8 @@ export default function ReceiveCarDetailScreen() {
               mode={pickerMode}
               is24Hour={false}
               display="default"
-              onChange={onPickerChange}
+              onValueChange={onPickerChange}
+              onDismiss={() => setShowPicker(false)}
             />
           )
         )}

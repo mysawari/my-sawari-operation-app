@@ -125,6 +125,7 @@ export default function AddVehicleScreen() {
   const [loading, setLoading] = useState(false);
 
   const [vehicleName, setVehicleName] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [vehicleNumber, setVehicleNumber] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [model, setModel] = useState("");
@@ -168,6 +169,7 @@ export default function AddVehicleScreen() {
 
       const formData = new FormData();
       formData.append("vehicleName", vehicleName);
+      formData.append("displayName", displayName);
       formData.append("vehicleNumber", vehicleNumber.toUpperCase());
       formData.append("manufacturer", manufacturer);
       formData.append("model", model || "");
@@ -346,6 +348,15 @@ export default function AddVehicleScreen() {
                 onChangeText={setVehicleNumber}
               />
             </View>
+
+            <InputField
+              label="Vehicle Display Name (Optional)"
+              placeholder="e.g. Innova"
+              icon="text-outline"
+              fullWidth
+              value={displayName}
+              onChangeText={setDisplayName}
+            />
 
             <View style={styles.row}>
               <PickerField

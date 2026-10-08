@@ -289,7 +289,7 @@ export default function EditVehicleScreen() {
 
   const onDateChange = (event, selectedDate) => {
     setShowPicker(false);
-    if (event?.type === "dismissed" || !selectedDate) return;
+    if (!selectedDate) return;
 
     switch (selectedDateField) {
       case "reg":
@@ -998,7 +998,8 @@ export default function EditVehicleScreen() {
             value={getPickerDate()}
             mode="date"
             display={Platform.OS === "ios" ? "spinner" : "default"}
-            onChange={onDateChange}
+            onValueChange={onDateChange}
+            onDismiss={() => setShowPicker(false)}
           />
         )}
       </KeyboardAvoidingView>

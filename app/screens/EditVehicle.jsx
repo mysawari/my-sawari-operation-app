@@ -157,8 +157,8 @@ const CheckboxField = ({ label, value, onToggle }) => (
       onPress={onToggle}
       activeOpacity={0.7}
     >
-      <Text style={{ color: value === "Yes" ? "#111827" : "#94A3B8", fontSize: 14 }}>
-        {value === "Yes" ? "Available" : "Not Available"}
+      <Text style={{ color: value === "Yes" ? "#111827" : (value === "No" ? "#111827" : "#94A3B8"), fontSize: 14 }}>
+        {value === "Yes" ? "Available" : (value === "No" ? "Not Available" : "Not Set (Empty)")}
       </Text>
       <Ionicons
         name={value === "Yes" ? "checkbox" : "square-outline"}
@@ -867,7 +867,7 @@ export default function EditVehicleScreen() {
               <CheckboxField
                 label="AC Available"
                 value={ac}
-                onToggle={() => setAc(ac === "Yes" ? "" : "Yes")}
+                onToggle={() => setAc(ac === "Yes" ? "No" : (ac === "No" ? "" : "Yes"))}
               />
             </View>
 

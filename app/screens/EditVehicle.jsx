@@ -203,6 +203,27 @@ export default function EditVehicleScreen() {
   const [engineCapacity, setEngineCapacity] = useState("");
   const [mileage, setMileage] = useState("");
   const [ac, setAc] = useState("");
+  
+  // Features
+  const [carPlay, setCarPlay] = useState("");
+  const [bluetooth, setBluetooth] = useState("");
+  const [touchscreen, setTouchscreen] = useState("");
+  const [usbCharging, setUsbCharging] = useState("");
+  const [sunroof, setSunroof] = useState("");
+
+  // Safety
+  const [airbags, setAirbags] = useState("");
+  const [absEbd, setAbsEbd] = useState("");
+  const [rearParkingSensors, setRearParkingSensors] = useState("");
+  const [rearCamera, setRearCamera] = useState("");
+  const [gps, setGps] = useState("");
+
+  // Bike Features & Safety
+  const [digitalDisplay, setDigitalDisplay] = useState("");
+  const [bikeAbs, setBikeAbs] = useState("");
+  const [discBrakes, setDiscBrakes] = useState("");
+  const [cbs, setCbs] = useState("");
+
   const [notes, setNotes] = useState("");
   const [vehicleStatus, setVehicleStatus] = useState("available");
   const [pricePerDay, setPricePerDay] = useState("");
@@ -268,6 +289,24 @@ export default function EditVehicleScreen() {
       setEngineCapacity(vehicle.engineCapacity || "");
       setMileage(vehicle.mileage || "");
       setAc(vehicle.ac || "");
+      
+      setCarPlay(vehicle.carPlay || "");
+      setBluetooth(vehicle.bluetooth || "");
+      setTouchscreen(vehicle.touchscreen || "");
+      setUsbCharging(vehicle.usbCharging || "");
+      setSunroof(vehicle.sunroof || "");
+
+      setAirbags(vehicle.airbags || "");
+      setAbsEbd(vehicle.absEbd || "");
+      setRearParkingSensors(vehicle.rearParkingSensors || "");
+      setRearCamera(vehicle.rearCamera || "");
+      setGps(vehicle.gps || "");
+
+      setDigitalDisplay(vehicle.digitalDisplay || "");
+      setBikeAbs(vehicle.bikeAbs || "");
+      setDiscBrakes(vehicle.discBrakes || "");
+      setCbs(vehicle.cbs || "");
+
       setNotes(vehicle.notes || "");
       setVehicleStatus(vehicle.status || "available");
 
@@ -538,7 +577,7 @@ export default function EditVehicleScreen() {
       );
 
       if (category) formData.append("category", category);
-      if (isCarCategory) formData.append("vehicleType", vehicleType);
+      if (vehicleType) formData.append("vehicleType", vehicleType);
 
       formData.append("fuelType", fuelType);
       formData.append("transmission", transmission);
@@ -549,6 +588,24 @@ export default function EditVehicleScreen() {
       formData.append("engineCapacity", engineCapacity.trim());
       formData.append("mileage", mileage.trim());
       formData.append("ac", ac.trim());
+      
+      formData.append("carPlay", carPlay.trim());
+      formData.append("bluetooth", bluetooth.trim());
+      formData.append("touchscreen", touchscreen.trim());
+      formData.append("usbCharging", usbCharging.trim());
+      formData.append("sunroof", sunroof.trim());
+
+      formData.append("airbags", airbags.trim());
+      formData.append("absEbd", absEbd.trim());
+      formData.append("rearParkingSensors", rearParkingSensors.trim());
+      formData.append("rearCamera", rearCamera.trim());
+      formData.append("gps", gps.trim());
+
+      formData.append("digitalDisplay", digitalDisplay.trim());
+      formData.append("bikeAbs", bikeAbs.trim());
+      formData.append("discBrakes", discBrakes.trim());
+      formData.append("cbs", cbs.trim());
+
       formData.append("notes", notes.trim());
       formData.append("status", vehicleStatus);
 
@@ -750,6 +807,19 @@ export default function EditVehicleScreen() {
                     })),
                   ]}
                 />
+              ) : category === "bike" ? (
+                <PickerField
+                  label="Vehicle Type (Optional)"
+                  selectedValue={vehicleType}
+                  onValueChange={setVehicleType}
+                  options={[
+                    { label: "Select vehicle type", value: "" },
+                    { label: "Commuter", value: "Commuter" },
+                    { label: "Sports", value: "Sports" },
+                    { label: "Cruiser", value: "Cruiser" },
+                    { label: "Scooter", value: "Scooter" },
+                  ]}
+                />
               ) : (
                 <View style={styles.inputContainer}>
                   <Text style={styles.label}>Vehicle Type</Text>
@@ -760,9 +830,7 @@ export default function EditVehicleScreen() {
                       color="#64748B"
                     />
                     <Text style={styles.noticeText}>
-                      {category
-                        ? "Not applicable for bikes"
-                        : "Select category first"}
+                      Select category first
                     </Text>
                   </View>
                 </View>
@@ -845,31 +913,172 @@ export default function EditVehicleScreen() {
               onChangeText={setEngineNumber}
             />
 
-            <View style={styles.row}>
-              <InputField
-                label="Engine Capacity"
-                placeholder="e.g. 1.5L"
-                icon="speedometer-outline"
-                value={engineCapacity}
-                onChangeText={setEngineCapacity}
-              />
+            {isCarCategory && (
+              <>
+                <SectionTitle title="Car Specifications" />
+                <View style={styles.row}>
+                  <InputField
+                    label="Engine Capacity"
+                    placeholder="e.g. 1.5L"
+                    icon="speedometer-outline"
+                    value={engineCapacity}
+                    onChangeText={setEngineCapacity}
+                  />
 
-              <InputField
-                label="Mileage"
-                placeholder="e.g. 18 km/l"
-                icon="speedometer-outline"
-                value={mileage}
-                onChangeText={setMileage}
-              />
-            </View>
+                  <InputField
+                    label="Mileage"
+                    placeholder="e.g. 18 km/l"
+                    icon="speedometer-outline"
+                    value={mileage}
+                    onChangeText={setMileage}
+                  />
+                </View>
 
-            <View style={styles.row}>
-              <CheckboxField
-                label="AC Available"
-                value={ac}
-                onToggle={() => setAc(ac === "Yes" ? "No" : (ac === "No" ? "" : "Yes"))}
-              />
-            </View>
+                <View style={styles.row}>
+                  <CheckboxField
+                    label="AC Available"
+                    value={ac}
+                    onToggle={() => setAc(ac === "Yes" ? "No" : (ac === "No" ? "" : "Yes"))}
+                  />
+                  <CheckboxField
+                    label="Apple CarPlay / Android Auto"
+                    value={carPlay}
+                    onToggle={() => setCarPlay(carPlay === "Yes" ? "No" : (carPlay === "No" ? "" : "Yes"))}
+                  />
+                </View>
+
+                <View style={styles.row}>
+                  <CheckboxField
+                    label="Bluetooth"
+                    value={bluetooth}
+                    onToggle={() => setBluetooth(bluetooth === "Yes" ? "No" : (bluetooth === "No" ? "" : "Yes"))}
+                  />
+                  <CheckboxField
+                    label="Touchscreen"
+                    value={touchscreen}
+                    onToggle={() => setTouchscreen(touchscreen === "Yes" ? "No" : (touchscreen === "No" ? "" : "Yes"))}
+                  />
+                </View>
+
+                <View style={styles.row}>
+                  <CheckboxField
+                    label="USB Charging"
+                    value={usbCharging}
+                    onToggle={() => setUsbCharging(usbCharging === "Yes" ? "No" : (usbCharging === "No" ? "" : "Yes"))}
+                  />
+                  <CheckboxField
+                    label="Sunroof"
+                    value={sunroof}
+                    onToggle={() => setSunroof(sunroof === "Yes" ? "No" : (sunroof === "No" ? "" : "Yes"))}
+                  />
+                </View>
+
+                <SectionTitle title="Car Safety" />
+                <View style={styles.row}>
+                  <CheckboxField
+                    label="Airbags"
+                    value={airbags}
+                    onToggle={() => setAirbags(airbags === "Yes" ? "No" : (airbags === "No" ? "" : "Yes"))}
+                  />
+                  <CheckboxField
+                    label="ABS + EBD"
+                    value={absEbd}
+                    onToggle={() => setAbsEbd(absEbd === "Yes" ? "No" : (absEbd === "No" ? "" : "Yes"))}
+                  />
+                </View>
+
+                <View style={styles.row}>
+                  <CheckboxField
+                    label="Rear Parking Sensors"
+                    value={rearParkingSensors}
+                    onToggle={() => setRearParkingSensors(rearParkingSensors === "Yes" ? "No" : (rearParkingSensors === "No" ? "" : "Yes"))}
+                  />
+                  <CheckboxField
+                    label="Rear Camera"
+                    value={rearCamera}
+                    onToggle={() => setRearCamera(rearCamera === "Yes" ? "No" : (rearCamera === "No" ? "" : "Yes"))}
+                  />
+                </View>
+
+                <View style={styles.row}>
+                  <CheckboxField
+                    label="GPS Navigation"
+                    value={gps}
+                    onToggle={() => setGps(gps === "Yes" ? "No" : (gps === "No" ? "" : "Yes"))}
+                  />
+                  <View style={styles.inputContainer} /> 
+                </View>
+              </>
+            )}
+
+            {!isCarCategory && category === "bike" && (
+              <>
+                <SectionTitle title="Bike Specifications" />
+                <View style={styles.row}>
+                  <InputField
+                    label="Engine (cc)"
+                    placeholder="e.g. 125cc"
+                    icon="speedometer-outline"
+                    value={engineCapacity}
+                    onChangeText={setEngineCapacity}
+                  />
+
+                  <InputField
+                    label="Mileage / Range"
+                    placeholder="e.g. 45 km/l"
+                    icon="speedometer-outline"
+                    value={mileage}
+                    onChangeText={setMileage}
+                  />
+                </View>
+
+                <SectionTitle title="Bike Features" />
+                <View style={styles.row}>
+                  <CheckboxField
+                    label="Bluetooth"
+                    value={bluetooth}
+                    onToggle={() => setBluetooth(bluetooth === "Yes" ? "No" : (bluetooth === "No" ? "" : "Yes"))}
+                  />
+                  <CheckboxField
+                    label="USB Charging"
+                    value={usbCharging}
+                    onToggle={() => setUsbCharging(usbCharging === "Yes" ? "No" : (usbCharging === "No" ? "" : "Yes"))}
+                  />
+                </View>
+
+                <View style={styles.row}>
+                  <CheckboxField
+                    label="Digital Display"
+                    value={digitalDisplay}
+                    onToggle={() => setDigitalDisplay(digitalDisplay === "Yes" ? "No" : (digitalDisplay === "No" ? "" : "Yes"))}
+                  />
+                  <View style={styles.inputContainer} /> 
+                </View>
+
+                <SectionTitle title="Bike Safety" />
+                <View style={styles.row}>
+                  <CheckboxField
+                    label="ABS"
+                    value={bikeAbs}
+                    onToggle={() => setBikeAbs(bikeAbs === "Yes" ? "No" : (bikeAbs === "No" ? "" : "Yes"))}
+                  />
+                  <CheckboxField
+                    label="Disc Brakes"
+                    value={discBrakes}
+                    onToggle={() => setDiscBrakes(discBrakes === "Yes" ? "No" : (discBrakes === "No" ? "" : "Yes"))}
+                  />
+                </View>
+
+                <View style={styles.row}>
+                  <CheckboxField
+                    label="CBS (Combined Braking)"
+                    value={cbs}
+                    onToggle={() => setCbs(cbs === "Yes" ? "No" : (cbs === "No" ? "" : "Yes"))}
+                  />
+                  <View style={styles.inputContainer} /> 
+                </View>
+              </>
+            )}
 
             <SectionTitle title="Vehicle Images" />
 

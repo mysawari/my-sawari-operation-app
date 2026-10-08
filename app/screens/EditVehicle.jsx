@@ -149,6 +149,26 @@ const DateField = ({
   </View>
 );
 
+const CheckboxField = ({ label, value, onToggle }) => (
+  <View style={styles.inputContainer}>
+    <Text style={styles.label}>{label}</Text>
+    <TouchableOpacity 
+      style={[styles.inputBox, { justifyContent: "space-between" }]} 
+      onPress={onToggle}
+      activeOpacity={0.7}
+    >
+      <Text style={{ color: value === "Yes" ? "#111827" : (value === "No" ? "#111827" : "#94A3B8"), fontSize: 14 }}>
+        {value === "Yes" ? "Available" : (value === "No" ? "Not Available" : "Not Set (Empty)")}
+      </Text>
+      <Ionicons
+        name={value === "Yes" ? "checkbox" : "square-outline"}
+        size={22}
+        color={value === "Yes" ? "#2563EB" : "#94A3B8"}
+      />
+    </TouchableOpacity>
+  </View>
+);
+
 const SectionTitle = ({ title }) => (
   <View style={styles.sectionHeader}>
     <Text style={styles.sectionTitle}>{title}</Text>
@@ -180,6 +200,9 @@ export default function EditVehicleScreen() {
   const [color, setColor] = useState("");
   const [chassisNumber, setChassisNumber] = useState("");
   const [engineNumber, setEngineNumber] = useState("");
+  const [engineCapacity, setEngineCapacity] = useState("");
+  const [mileage, setMileage] = useState("");
+  const [ac, setAc] = useState("");
   const [notes, setNotes] = useState("");
   const [vehicleStatus, setVehicleStatus] = useState("available");
   const [pricePerDay, setPricePerDay] = useState("");
@@ -242,6 +265,9 @@ export default function EditVehicleScreen() {
       setColor(vehicle.color || "");
       setChassisNumber(vehicle.chassisNumber || "");
       setEngineNumber(vehicle.engineNumber || "");
+      setEngineCapacity(vehicle.engineCapacity || "");
+      setMileage(vehicle.mileage || "");
+      setAc(vehicle.ac || "");
       setNotes(vehicle.notes || "");
       setVehicleStatus(vehicle.status || "available");
 
@@ -520,6 +546,9 @@ export default function EditVehicleScreen() {
       formData.append("color", color);
       formData.append("chassisNumber", chassisNumber.trim());
       formData.append("engineNumber", engineNumber.trim());
+      formData.append("engineCapacity", engineCapacity.trim());
+      formData.append("mileage", mileage.trim());
+      formData.append("ac", ac.trim());
       formData.append("notes", notes.trim());
       formData.append("status", vehicleStatus);
 
@@ -815,6 +844,32 @@ export default function EditVehicleScreen() {
               value={engineNumber}
               onChangeText={setEngineNumber}
             />
+
+            <View style={styles.row}>
+              <InputField
+                label="Engine Capacity"
+                placeholder="e.g. 1.5L"
+                icon="speedometer-outline"
+                value={engineCapacity}
+                onChangeText={setEngineCapacity}
+              />
+
+              <InputField
+                label="Mileage"
+                placeholder="e.g. 18 km/l"
+                icon="speedometer-outline"
+                value={mileage}
+                onChangeText={setMileage}
+              />
+            </View>
+
+            <View style={styles.row}>
+              <CheckboxField
+                label="AC Available"
+                value={ac}
+                onToggle={() => setAc(ac === "Yes" ? "No" : (ac === "No" ? "" : "Yes"))}
+              />
+            </View>
 
             <SectionTitle title="Vehicle Images" />
 

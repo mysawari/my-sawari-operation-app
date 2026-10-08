@@ -111,6 +111,26 @@ const DateField = ({
   </View>
 );
 
+const CheckboxField = ({ label, value, onToggle }) => (
+  <View style={styles.inputContainer}>
+    <Text style={styles.label}>{label}</Text>
+    <TouchableOpacity 
+      style={[styles.inputBox, { justifyContent: "space-between" }]} 
+      onPress={onToggle}
+      activeOpacity={0.7}
+    >
+      <Text style={{ color: value === "Yes" ? "#111827" : (value === "No" ? "#111827" : "#94A3B8"), fontSize: 14 }}>
+        {value === "Yes" ? "Available" : (value === "No" ? "Not Available" : "Not Set (Empty)")}
+      </Text>
+      <Ionicons
+        name={value === "Yes" ? "checkbox" : "square-outline"}
+        size={22}
+        color={value === "Yes" ? "#2563EB" : "#94A3B8"}
+      />
+    </TouchableOpacity>
+  </View>
+);
+
 const SectionTitle = ({ title }) => (
   <View style={styles.sectionHeader}>
     <Text style={styles.sectionTitle}>{title}</Text>
@@ -137,6 +157,9 @@ export default function AddVehicleScreen() {
   const [color, setColor] = useState("");
   const [chassisNumber, setChassisNumber] = useState("");
   const [engineNumber, setEngineNumber] = useState("");
+  const [engineCapacity, setEngineCapacity] = useState("");
+  const [mileage, setMileage] = useState("");
+  const [ac, setAc] = useState("");
   const [vehicleStatus, setVehicleStatus] = useState("available");
   const [notes, setNotes] = useState("");
 
@@ -181,6 +204,9 @@ export default function AddVehicleScreen() {
       formData.append("color", color || "");
       formData.append("chassisNumber", chassisNumber || "");
       formData.append("engineNumber", engineNumber || "");
+      formData.append("engineCapacity", engineCapacity || "");
+      formData.append("mileage", mileage || "");
+      formData.append("ac", ac || "");
       formData.append("notes", notes || "");
       formData.append("status", vehicleStatus);
 
@@ -465,6 +491,32 @@ export default function AddVehicleScreen() {
                   { label: "Red", value: "Red" },
                   { label: "Grey", value: "Grey" },
                 ]}
+              />
+            </View>
+
+            <View style={styles.row}>
+              <InputField
+                label="Engine Capacity"
+                placeholder="e.g. 1.5L"
+                icon="speedometer-outline"
+                value={engineCapacity}
+                onChangeText={setEngineCapacity}
+              />
+
+              <InputField
+                label="Mileage"
+                placeholder="e.g. 18 km/l"
+                icon="speedometer-outline"
+                value={mileage}
+                onChangeText={setMileage}
+              />
+            </View>
+
+            <View style={styles.row}>
+              <CheckboxField
+                label="AC Available"
+                value={ac}
+                onToggle={() => setAc(ac === "Yes" ? "No" : (ac === "No" ? "" : "Yes"))}
               />
             </View>
 

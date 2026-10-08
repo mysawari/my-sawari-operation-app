@@ -9,6 +9,12 @@
 //       Each tap saves the time + the current location name.
 //    4. The driver or a leader can Cancel any task that isn't finished.
 //
+//  Filters:
+//    Type    All | Pickup | Drop          (My Tasks and All Tasks)
+//    Status  Active | Unassigned | Done   (Unassigned = All Tasks only:
+//                                          pickups + drops with no one
+//                                          assigned yet)
+//
 //  Everything a card shows or allows comes from STATUS_MAP + ACTIONS.
 //
 //  Data: services/pickupDropService.js → backend /api/v1/service
@@ -182,6 +188,28 @@ const getCardActions = (item, { isMine, leader, scope }) => {
     canCancel: (isMine || leaderHere) && s.canCancel,
   };
 };
+
+// Type filter — "all" shows pickups and drops together
+const TYPE_TABS = [
+  { id: "all", label: "All" },
+  { id: "pickup", label: "Pickup" },
+  { id: "drop", label: "Drop" },
+];
+
+// Status filter — "unassigned" only exists in All Tasks (leaders)
+const STATUS_TABS = [
+  { id: "active", label: "Active", allOnly: false },
+  { id: "unassigned", label: "Unassigned", allOnly: true },
+  { id: "completed", label: "Done", allOnly: false },
+];
+
+const rupees = (n) => `₹${Number(n || 0).toLocaleString("en-IN")}`;
+
+// Open = not finished / cancelled
+const OPEN_STATUSES = ["pending", "assigned", "on_the_way", "reached"];
+
+// Open task with no one assigned
+const isUnassigned = (t) => OPEN_STATUSES.includes(t.status) && !t.assignedTo;
 
 const STEPS = [
   { label: "Started", time: "startedAt", place: "startLocation" },
@@ -440,6 +468,15 @@ function TaskCard({ item, myId, scope, leader, busy, onAction, onAssign }) {
           <Text style={styles.infoLabel}>Reach by</Text>
           <Text style={styles.infoValue}>{fmtDateTime(item.scheduledAt)}</Text>
         </View>
+
+        {/* Drop price (set by the leader on the Receive Desk) */}
+        {item.type === "drop" && Number(item.dropCharge) > 0 && (
+          <View style={styles.infoRow}>
+            <Ionicons name="cash-outline" size={15} color="#64748B" />
+            <Text style={styles.infoLabel}>Drop price</Text>
+            <Text style={styles.infoValue}>{rupees(item.dropCharge)}</Text>
+          </View>
+        )}
 
         {/* Vehicle */}
         <View style={styles.infoRow}>
@@ -771,11 +808,15 @@ export default function PickupDropScreen() {
 
   // Leaders open on All Tasks; others only have My Tasks
   const [scope, setScope] = useState(leader ? "all" : "mine"); // mine | all
-  const [type, setType] = useState("pickup"); // pickup | drop
-  const [status, setStatus] = useState("active"); // active | completed
+  const [type, setType] = useState("all"); // all | pickup | drop
+  const [status, setStatus] = useState("active"); // active | unassigned | completed
 
   const [items, setItems] = useState([]);
-  const [counts, setCounts] = useState({ active: 0, completed: 0 });
+  const [counts, setCounts] = useState({
+    active: 0,
+    unassigned: 0,
+    completed: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -792,8 +833,27 @@ export default function PickupDropScreen() {
       try {
         const res = await listTasks({ scope, type, status });
         if (id !== requestId.current) return; // a newer request replaced this one
-        setItems(res.data);
-        setCounts(res.counts);
+        const list = res.data || [];
+        const apiCounts = res.counts || {};
+        setItems(list);
+
+        setCounts((prev) => {
+          // Unassigned: use the backend number when it sends one,
+          // otherwise work it out from the list we just loaded
+          let unassigned = Number(apiCounts.unassigned);
+          if (!Number.isFinite(unassigned)) {
+            if (scope !== "all") unassigned = 0;
+            else if (status === "unassigned") unassigned = list.length;
+            else if (status === "active")
+              unassigned = list.filter(isUnassigned).length;
+            else unassigned = prev.unassigned; // Done tab can't tell — keep last
+          }
+          return {
+            active: Number(apiCounts.active) || 0,
+            completed: Number(apiCounts.completed) || 0,
+            unassigned,
+          };
+        });
         setError("");
       } catch (err) {
         if (id === requestId.current)
@@ -814,6 +874,13 @@ export default function PickupDropScreen() {
       load();
     }, [load]),
   );
+
+  const changeScope = (next) => {
+    setScope(next);
+    if (next === "mine" && status === "unassigned") setStatus("active");
+  };
+
+  const statusTabs = STATUS_TABS.filter((t) => !t.allOnly || scope === "all");
 
   const replaceCard = (card) =>
     setItems((prev) => prev.map((c) => (c.id === card.id ? card : c)));
@@ -845,6 +912,12 @@ export default function PickupDropScreen() {
               });
             }
             if (updated) replaceCard(updated);
+            if (actionKey === "cancel" && isUnassigned(item)) {
+              setCounts((c) => ({
+                ...c,
+                unassigned: Math.max(0, c.unassigned - 1),
+              }));
+            }
 
             // After Complete, keep the card on screen showing "Done"
             // for a moment, then refresh (it moves to the Done tab).
@@ -865,17 +938,32 @@ export default function PickupDropScreen() {
   };
 
   const handleAssigned = (card) => {
-    replaceCard(card);
+    const before = items.find((c) => c.id === card.id);
+    if (before && isUnassigned(before) && !isUnassigned(card)) {
+      setCounts((c) => ({ ...c, unassigned: Math.max(0, c.unassigned - 1) }));
+    }
+    if (status === "unassigned") {
+      setItems((prev) => prev.filter((c) => c.id !== card.id));
+    } else {
+      replaceCard(card);
+    }
     load("silent");
   };
 
-  const typeWord = type === "pickup" ? "pickups" : "drops";
+  const typeWord =
+    type === "pickup"
+      ? "pickups"
+      : type === "drop"
+        ? "drops"
+        : "pickups or drops";
   const emptyText =
     status === "completed"
       ? `No completed ${typeWord} yet.`
-      : scope === "mine"
-        ? `No ${typeWord} assigned to you right now.`
-        : `No open ${typeWord}.`;
+      : status === "unassigned"
+        ? `No unassigned ${typeWord}. Everything has a team member.`
+        : scope === "mine"
+          ? `No ${typeWord} assigned to you right now.`
+          : `No open ${typeWord}.`;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -915,7 +1003,7 @@ export default function PickupDropScreen() {
                 <TouchableOpacity
                   key={t.id}
                   style={[styles.tab, active && styles.tabActive]}
-                  onPress={() => setScope(t.id)}
+                  onPress={() => changeScope(t.id)}
                   activeOpacity={0.8}
                 >
                   <Ionicons
@@ -935,13 +1023,10 @@ export default function PickupDropScreen() {
         )}
       </View>
 
-      {/* Pickup / Drop + Active / Completed */}
+      {/* All / Pickup / Drop */}
       <View style={styles.filters}>
         <View style={styles.segment}>
-          {[
-            { id: "pickup", label: "Pickup" },
-            { id: "drop", label: "Drop" },
-          ].map((t) => (
+          {TYPE_TABS.map((t) => (
             <TouchableOpacity
               key={t.id}
               style={[
@@ -961,28 +1046,35 @@ export default function PickupDropScreen() {
             </TouchableOpacity>
           ))}
         </View>
+      </View>
 
-        <View style={styles.rowCenter}>
-          {[
-            { id: "active", label: "Active", n: counts.active },
-            { id: "completed", label: "Done", n: counts.completed },
-          ].map((s) => (
+      {/* Active / Unassigned (All Tasks) / Done */}
+      <View style={styles.chipsRow}>
+        {statusTabs.map((t) => {
+          const active = status === t.id;
+          const warn = t.id === "unassigned" && counts.unassigned > 0;
+          return (
             <TouchableOpacity
-              key={s.id}
-              style={[styles.chip, status === s.id && styles.chipActive]}
-              onPress={() => setStatus(s.id)}
+              key={t.id}
+              style={[
+                styles.chip,
+                warn && !active && styles.chipWarn,
+                active && styles.chipActive,
+              ]}
+              onPress={() => setStatus(t.id)}
             >
               <Text
                 style={[
                   styles.chipText,
-                  status === s.id && styles.chipTextActive,
+                  warn && !active && styles.chipTextWarn,
+                  active && styles.chipTextActive,
                 ]}
               >
-                {s.label} ({s.n})
+                {t.label} ({counts[t.id] || 0})
               </Text>
             </TouchableOpacity>
-          ))}
-        </View>
+          );
+        })}
       </View>
 
       {/* List */}
@@ -1099,12 +1191,8 @@ const styles = StyleSheet.create({
 
   // Filters
   filters: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    gap: 8,
+    paddingTop: 10,
   },
   segment: {
     flexDirection: "row",
@@ -1112,10 +1200,21 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     padding: 3,
   },
-  segmentBtn: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 7 },
+  segmentBtn: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 7,
+    borderRadius: 7,
+  },
   segmentBtnActive: { backgroundColor: "#FFFFFF" },
   segmentText: { fontSize: 13, fontWeight: "600", color: "#64748B" },
   segmentTextActive: { color: "#0F172A" },
+  chipsRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
   chip: {
     paddingHorizontal: 11,
     paddingVertical: 6,
@@ -1127,6 +1226,8 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: "#0B132B", borderColor: "#0B132B" },
   chipText: { fontSize: 12, fontWeight: "600", color: "#64748B" },
   chipTextActive: { color: "#FFFFFF" },
+  chipWarn: { backgroundColor: "#FEF2F2", borderColor: "#FECACA" },
+  chipTextWarn: { color: "#DC2626" },
 
   // List
   list: { paddingHorizontal: 16, paddingBottom: 32 },

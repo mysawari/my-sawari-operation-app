@@ -152,8 +152,8 @@ const DateField = ({
 const CheckboxField = ({ label, value, onToggle }) => (
   <View style={styles.inputContainer}>
     <Text style={styles.label}>{label}</Text>
-    <TouchableOpacity 
-      style={[styles.inputBox, { justifyContent: "space-between" }]} 
+    <TouchableOpacity
+      style={[styles.inputBox, { justifyContent: "space-between" }]}
       onPress={onToggle}
       activeOpacity={0.7}
     >
@@ -203,7 +203,7 @@ export default function EditVehicleScreen() {
   const [engineCapacity, setEngineCapacity] = useState("");
   const [mileage, setMileage] = useState("");
   const [ac, setAc] = useState("");
-  
+
   // Features
   const [carPlay, setCarPlay] = useState("");
   const [bluetooth, setBluetooth] = useState("");
@@ -289,7 +289,7 @@ export default function EditVehicleScreen() {
       setEngineCapacity(vehicle.engineCapacity || "");
       setMileage(vehicle.mileage || "");
       setAc(vehicle.ac || "");
-      
+
       setCarPlay(vehicle.carPlay || "");
       setBluetooth(vehicle.bluetooth || "");
       setTouchscreen(vehicle.touchscreen || "");
@@ -588,7 +588,7 @@ export default function EditVehicleScreen() {
       formData.append("engineCapacity", engineCapacity.trim());
       formData.append("mileage", mileage.trim());
       formData.append("ac", ac.trim());
-      
+
       formData.append("carPlay", carPlay.trim());
       formData.append("bluetooth", bluetooth.trim());
       formData.append("touchscreen", touchscreen.trim());
@@ -889,6 +889,7 @@ export default function EditVehicleScreen() {
                   { label: "Blue", value: "Blue" },
                   { label: "Red", value: "Red" },
                   { label: "Grey", value: "Grey" },
+                  { label: "Brown", value: "Brown" },
                 ]}
               />
             </View>
@@ -1006,7 +1007,7 @@ export default function EditVehicleScreen() {
                     value={gps}
                     onToggle={() => setGps(gps === "Yes" ? "No" : (gps === "No" ? "" : "Yes"))}
                   />
-                  <View style={styles.inputContainer} /> 
+                  <View style={styles.inputContainer} />
                 </View>
               </>
             )}
@@ -1052,7 +1053,7 @@ export default function EditVehicleScreen() {
                     value={digitalDisplay}
                     onToggle={() => setDigitalDisplay(digitalDisplay === "Yes" ? "No" : (digitalDisplay === "No" ? "" : "Yes"))}
                   />
-                  <View style={styles.inputContainer} /> 
+                  <View style={styles.inputContainer} />
                 </View>
 
                 <SectionTitle title="Bike Safety" />
@@ -1075,7 +1076,7 @@ export default function EditVehicleScreen() {
                     value={cbs}
                     onToggle={() => setCbs(cbs === "Yes" ? "No" : (cbs === "No" ? "" : "Yes"))}
                   />
-                  <View style={styles.inputContainer} /> 
+                  <View style={styles.inputContainer} />
                 </View>
               </>
             )}
@@ -1279,7 +1280,7 @@ export default function EditVehicleScreen() {
           style={styles.sheetBackdrop}
           onPress={() => setImageSheetIndex(null)}
         >
-          <Pressable style={styles.sheet} onPress={() => {}}>
+          <Pressable style={styles.sheet} onPress={() => { }}>
             <View style={styles.sheetHandle} />
 
             <Text style={styles.sheetTitle}>

@@ -128,30 +128,10 @@ export default function PendingPaymentsScreen() {
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
 
-      const [resCash, resPhonepe] = await Promise.all([
-        api.get("/payments/pending", { params: { status: "pending", limit: PAGE_SIZE } }).catch(() => ({ data: { data: [] } })),
-        api.get("/payments/phonepe/pending", { params: { status: "pending", limit: PAGE_SIZE } }).catch(() => ({ data: { data: [] } }))
-      ]);
-
-      const cashData = resCash.data?.data || [];
-      const phonepeData = resPhonepe.data?.data || [];
-
-      // Combine and deduplicate
-      const combined = [...cashData, ...phonepeData];
-      const uniqueMap = new Map();
-      combined.forEach(p => {
-        if (!uniqueMap.has(p._id)) {
-          uniqueMap.set(p._id, p);
-        } else {
-          const existing = uniqueMap.get(p._id);
-          existing.remainingAmount = Math.max(existing.remainingAmount, p.remainingAmount);
-        }
-      });
-
-      const uniquePayments = Array.from(uniqueMap.values());
-      uniquePayments.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      const res = await api.get("/handovers/pending-payments", { params: { limit: PAGE_SIZE } });
+      const data = res.data?.data || [];
       
-      setPayments(uniquePayments);
+      setPayments(data);
     } catch (err) {
       console.error("Failed to load pending payments", err);
     } finally {

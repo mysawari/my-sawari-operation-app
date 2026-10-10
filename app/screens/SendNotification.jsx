@@ -4,10 +4,12 @@ import api from '../../services/api';
 import { Stack, useRouter } from 'expo-router';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 
 export default function SendNotificationScreen() {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [imageUri, setImageUri] = useState(null);
   const [mobile, setMobile] = useState('');
   const [type, setType] = useState('broadcast'); // 'broadcast' | 'specific'
   const [loading, setLoading] = useState(false);
@@ -29,6 +31,19 @@ export default function SendNotificationScreen() {
     };
     fetchCustomers();
   }, []);
+
+  const handlePickImage = async () => {
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [16, 9],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setImageUri(result.assets[0].uri);
+    }
+  };
 
   const handleSend = async () => {
     if (!title.trim() || !body.trim()) {
@@ -57,16 +72,31 @@ export default function SendNotificationScreen() {
         customerId = found._id;
       }
 
-      await api.post('/notifications/send', {
-        title: title.trim(),
-        body: body.trim(),
-        target: type === 'broadcast' ? 'all' : 'specific',
-        customerId: customerId
+      const formData = new FormData();
+      formData.append('title', title.trim());
+      formData.append('body', body.trim());
+      formData.append('target', type === 'broadcast' ? 'all' : 'specific');
+      
+      if (customerId) {
+        formData.append('customerId', customerId);
+      }
+
+      if (imageUri) {
+        const localUri = imageUri;
+        const filename = localUri.split('/').pop() || 'notification.jpg';
+        const match = /\.(\w+)$/.exec(filename);
+        const mimeType = match ? `image/${match[1]}` : `image/jpeg`;
+        formData.append('image', { uri: localUri, name: filename, type: mimeType });
+      }
+
+      await api.post('/notifications/send', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
       
       Alert.alert('Success', 'Notification sent successfully!');
       setTitle('');
       setBody('');
+      setImageUri(null);
       setMobile('');
     } catch (err) {
       console.warn("Failed to send notification", err?.message);
@@ -191,6 +221,24 @@ export default function SendNotificationScreen() {
               />
             </View>
 
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Image (Optional)</Text>
+              <TouchableOpacity style={styles.imagePicker} onPress={handlePickImage}>
+                <Feather name="image" size={24} color="#6B7280" />
+                <Text style={styles.imagePickerText}>
+                  {imageUri ? 'Change Image' : 'Select an Image'}
+                </Text>
+              </TouchableOpacity>
+              {imageUri && (
+                <View style={styles.imagePreviewContainer}>
+                  <Text style={styles.imagePreviewText}>Image Selected</Text>
+                  <TouchableOpacity onPress={() => setImageUri(null)}>
+                    <Feather name="x-circle" size={20} color="#DC2626" />
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+
             <TouchableOpacity 
               style={[styles.sendBtn, loading && styles.disabledBtn]} 
               onPress={handleSend}
@@ -244,6 +292,10 @@ const styles = StyleSheet.create({
   sendBtn: { backgroundColor: '#4F46E5', flexDirection: 'row', paddingVertical: 14, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   disabledBtn: { opacity: 0.7 },
   btnTextWhite: { color: '#FFFFFF', fontWeight: '600', fontSize: 16 },
+  imagePicker: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12 },
+  imagePickerText: { marginLeft: 12, fontSize: 15, color: '#4B5563' },
+  imagePreviewContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, paddingHorizontal: 4 },
+  imagePreviewText: { fontSize: 13, color: '#059669', fontWeight: '600' },
   dropdown: { position: 'absolute', top: 52, left: 0, right: 0, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, zIndex: 100 },
   dropdownItem: { padding: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
   dropdownItemText: { fontSize: 14, color: '#374151' },

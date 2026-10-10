@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import api from '../../../services/api';
 
 export default function MembershipTrackerScreen() {
@@ -15,6 +16,7 @@ export default function MembershipTrackerScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [pushTitle, setPushTitle] = useState('');
   const [pushBody, setPushBody] = useState('');
+  const [pushImageUri, setPushImageUri] = useState(null);
   const [sendingPush, setSendingPush] = useState(false);
   const [searchBookingQuery, setSearchBookingQuery] = useState('');
 
@@ -47,16 +49,29 @@ export default function MembershipTrackerScreen() {
 
     setSendingPush(true);
     try {
-      await api.post('/notifications/send', {
-        target: 'specific',
-        customerId: [customerId],
-        title: pushTitle,
-        body: pushBody
+      const formData = new FormData();
+      formData.append('target', 'specific');
+      formData.append('customerId', customerId);
+      formData.append('title', pushTitle.trim());
+      formData.append('body', pushBody.trim());
+
+      if (pushImageUri) {
+        const localUri = pushImageUri;
+        const filename = localUri.split('/').pop() || 'notification.jpg';
+        const match = /\.(\w+)$/.exec(filename);
+        const mimeType = match ? `image/${match[1]}` : `image/jpeg`;
+        formData.append('image', { uri: localUri, name: filename, type: mimeType });
+      }
+
+      await api.post('/notifications/send', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
+      
       Alert.alert('Success', 'Push notification sent to customer!');
       setModalVisible(false);
       setPushTitle('');
       setPushBody('');
+      setPushImageUri(null);
     } catch (err) {
       Alert.alert('Error', 'Failed to send notification');
     } finally {
@@ -240,6 +255,35 @@ export default function MembershipTrackerScreen() {
               onChangeText={setPushBody}
               multiline
             />
+            
+            <TouchableOpacity 
+              style={[styles.modalInput, { flexDirection: 'row', alignItems: 'center' }]} 
+              onPress={async () => {
+                let result = await ImagePicker.launchImageLibraryAsync({
+                  mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                  allowsEditing: true,
+                  aspect: [16, 9],
+                  quality: 0.8,
+                });
+                if (!result.canceled && result.assets && result.assets.length > 0) {
+                  setPushImageUri(result.assets[0].uri);
+                }
+              }}
+            >
+              <Feather name="image" size={20} color="#6B7280" style={{ marginRight: 8 }} />
+              <Text style={{ color: '#4B5563' }}>
+                {pushImageUri ? 'Change Selected Image' : 'Select an Image (Optional)'}
+              </Text>
+            </TouchableOpacity>
+
+            {pushImageUri && (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4, marginBottom: 12 }}>
+                <Text style={{ fontSize: 13, color: '#059669', fontWeight: '600' }}>Image ready</Text>
+                <TouchableOpacity onPress={() => setPushImageUri(null)}>
+                  <Feather name="x-circle" size={18} color="#DC2626" />
+                </TouchableOpacity>
+              </View>
+            )}
 
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.cancelBtn} onPress={() => setModalVisible(false)}>

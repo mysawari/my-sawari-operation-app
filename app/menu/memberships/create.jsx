@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import api from '../../../services/api';
 import { Stack, useRouter } from 'expo-router';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -7,9 +8,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function CreateMembershipScreen() {
   const [mobileNumber, setMobileNumber] = useState('');
+  const [customerName, setCustomerName] = useState('');
   const [plan, setPlan] = useState('starter');
   const [amount, setAmount] = useState('999');
   const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [upiLastFour, setUpiLastFour] = useState('');
+  const [paymentDate, setPaymentDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
   const [loading, setLoading] = useState(false);
   
   const router = useRouter();
@@ -31,9 +37,14 @@ export default function CreateMembershipScreen() {
     try {
       const res = await api.post('/memberships', {
         mobileNumber: mobileNumber.trim(),
+        customerName: customerName.trim(),
         plan,
         amount,
-        paymentMethod
+        paymentMethod,
+        ...(paymentMethod !== 'cash' && {
+          upiLastFour: upiLastFour.trim(),
+          paymentDate: paymentDate.toISOString()
+        })
       });
       
       Alert.alert('Success', 'Membership added successfully!');
@@ -73,6 +84,16 @@ export default function CreateMembershipScreen() {
                 value={mobileNumber}
                 onChangeText={setMobileNumber}
                 maxLength={10}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Customer Name (Optional if registered)</Text>
+              <TextInput 
+                style={styles.input}
+                placeholder="e.g. John Doe"
+                value={customerName}
+                onChangeText={setCustomerName}
               />
             </View>
 
@@ -133,6 +154,63 @@ export default function CreateMembershipScreen() {
                 ))}
               </View>
             </View>
+
+            {paymentMethod !== 'cash' && (
+              <>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>UPI Last 4 Digits</Text>
+                  <TextInput 
+                    style={styles.input}
+                    placeholder="e.g. 1234"
+                    keyboardType="number-pad"
+                    value={upiLastFour}
+                    onChangeText={setUpiLastFour}
+                    maxLength={4}
+                  />
+                </View>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Payment Date & Time</Text>
+                  <TouchableOpacity 
+                    style={[styles.input, { justifyContent: 'center' }]} 
+                    onPress={() => setShowDatePicker(true)}
+                  >
+                    <Text style={{ color: '#111827', fontSize: 15 }}>
+                      {paymentDate.toLocaleString()}
+                    </Text>
+                  </TouchableOpacity>
+                  {showDatePicker && (
+                    <DateTimePicker
+                      value={paymentDate}
+                      mode="date"
+                      display="default"
+                      onChange={(event, selectedDate) => {
+                        setShowDatePicker(false);
+                        if (selectedDate) {
+                          setPaymentDate(selectedDate);
+                          if (Platform.OS === 'android') {
+                            setShowTimePicker(true);
+                          }
+                        }
+                      }}
+                    />
+                  )}
+                  {showTimePicker && Platform.OS === 'android' && (
+                    <DateTimePicker
+                      value={paymentDate}
+                      mode="time"
+                      display="default"
+                      onChange={(event, selectedDate) => {
+                        setShowTimePicker(false);
+                        if (selectedDate) {
+                          setPaymentDate(selectedDate);
+                        }
+                      }}
+                    />
+                  )}
+                </View>
+              </>
+            )}
 
             <TouchableOpacity 
               style={[styles.submitBtn, loading && styles.disabledBtn]} 

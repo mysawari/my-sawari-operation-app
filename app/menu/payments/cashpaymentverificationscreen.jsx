@@ -737,6 +737,11 @@ const PaymentCardItem = React.memo(({ item, isCollecting, onCollect }) => {
 
       <View style={styles.footerRow}>
         <View style={styles.footerMeta}>
+          {item?.customPaymentDate && (
+            <Text style={[styles.footerDate, { color: "#1E3A8A", fontWeight: "600", marginBottom: 2 }]}>
+              Payment Date: {formatDateTime(item.customPaymentDate)}
+            </Text>
+          )}
           <Text style={styles.footerMetaText} numberOfLines={1}>
             {metaText}
           </Text>

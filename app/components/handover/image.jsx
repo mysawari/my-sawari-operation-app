@@ -145,7 +145,7 @@ export default function HandoverImageScreen() {
     let result;
     try {
       result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 0.4,
         allowsEditing: false,
       });
@@ -257,7 +257,7 @@ export default function HandoverImageScreen() {
     let result;
     try {
       result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 0.6,
         allowsEditing: false,
       });

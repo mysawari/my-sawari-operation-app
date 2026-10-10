@@ -124,6 +124,7 @@ export default function EditRentalScreen() {
   const [securityDeposit, setSecurityDeposit] = useState("0");
   const [extraCharges, setExtraCharges] = useState("0");
   const [discountAmount, setDiscountAmount] = useState("0");
+  const [membershipDiscount, setMembershipDiscount] = useState("0");
   const [sawariCashUsed, setSawariCashUsed] = useState("0");
   const [amountReceivedNow, setAmountReceivedNow] = useState("0");
   const [reasonForChange, setReasonForChange] = useState("");
@@ -248,7 +249,8 @@ export default function EditRentalScreen() {
           deposit +
           extra -
           discount -
-          sawariCash,
+          sawariCash -
+          (Number(membershipDiscount) || 0),
       );
 
     const amountReceivedNowCumulative =
@@ -279,6 +281,7 @@ export default function EditRentalScreen() {
       securityDeposit: deposit,
       extraCharges: extra,
       discountAmount: discount,
+      membershipDiscount: Number(membershipDiscount) || 0,
       sawariCashUsed: sawariCash,
       totalAmount,
       bookingAmountPaid,
@@ -368,6 +371,7 @@ export default function EditRentalScreen() {
       setSecurityDeposit(String(data.securityDeposit || 0));
       setExtraCharges(String(data.extraCharges || 0));
       setDiscountAmount(String(data.discountAmount || 0));
+      setMembershipDiscount(String(data.membershipDiscount || 0));
 
       setBookingAmountPaid(data.bookingAmountPaid || 0);
       setAmountReceivedPreviously(data.amountReceivedPreviously || 0);
@@ -1276,10 +1280,17 @@ export default function EditRentalScreen() {
                       value={liveBillSummary.extraCharges}
                     />
                     <RecapRow
-                      label="Discount"
-                      value={liveBillSummary.discountAmount}
+                      label="Discount (Coupon)"
+                      value={Math.max(0, liveBillSummary.discountAmount - liveBillSummary.membershipDiscount)}
                       negative
                     />
+                    {liveBillSummary.membershipDiscount > 0 && (
+                      <RecapRow
+                        label="Membership Discount"
+                        value={liveBillSummary.membershipDiscount}
+                        negative
+                      />
+                    )}
                     <View style={styles.recapDivider} />
                     <RecapRow
                       label="Total Amount"

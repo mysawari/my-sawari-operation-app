@@ -106,6 +106,19 @@ export default function MembershipsScreen() {
           </View>
         </View>
 
+        <View style={[styles.detailsRow, { marginBottom: 16, backgroundColor: '#F0FDF4', padding: 12, borderRadius: 8 }]}>
+          <View style={styles.detailItem}>
+            <Text style={[styles.detailLabel, { color: '#166534' }]}>Total Saved</Text>
+            <Text style={[styles.amountText, { color: '#15803D' }]}>₹{item.totalSaved || 0}</Text>
+          </View>
+          <View style={styles.detailItem}>
+            <Text style={[styles.detailLabel, { color: '#166534' }]}>Annual Cap</Text>
+            <Text style={[styles.reasonText, { color: '#15803D', fontWeight: '600' }]}>
+              ₹{item.plan === 'pro' ? '20,000' : item.plan === 'plus' ? '15,000' : '10,000'}
+            </Text>
+          </View>
+        </View>
+
         <TouchableOpacity 
           style={styles.cancelBtn} 
           activeOpacity={0.8}
@@ -135,7 +148,9 @@ export default function MembershipsScreen() {
           <Feather name="arrow-left" size={24} color="#111827" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Memberships</Text>
-        <View style={styles.headerRight} />
+        <TouchableOpacity onPress={() => router.push('/menu/memberships/create')} style={styles.headerRight}>
+          <Feather name="plus" size={24} color="#111827" />
+        </TouchableOpacity>
       </View>
       <FlatList
         data={memberships}

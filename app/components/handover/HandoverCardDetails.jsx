@@ -469,7 +469,10 @@ export default function HandoverDetails() {
       summaryObj.balanceAmount !== undefined
         ? summaryObj.balanceAmount
         : paymentObj.balanceAmount,
+    membershipDiscount: bookingObj?.membershipDiscount || 0,
   };
+  // Separate out coupon discount from the total discount
+  const couponDiscount = Math.max(0, bill.discountAmount - bill.membershipDiscount);
   const extensionSummary = handover.payment?.billSummary?.extensionSummary;
 
   const extensionBills = extensionSummary?.history || [];
@@ -765,14 +768,24 @@ export default function HandoverDetails() {
                     </Text>
                   </View>
                 )}
-
-                {bill.discountAmount > 0 && (
+                {couponDiscount > 0 && (
                   <View style={styles.billLineRow}>
                     <Text style={[styles.billLineLabel, styles.discountText]}>
-                      Discount
+                      Discount (Coupon)
                     </Text>
                     <Text style={[styles.billLineValue, styles.discountText]}>
-                      − {formatINR(bill.discountAmount)}
+                      − {formatINR(couponDiscount)}
+                    </Text>
+                  </View>
+                )}
+                
+                {bill.membershipDiscount > 0 && (
+                  <View style={styles.billLineRow}>
+                    <Text style={[styles.billLineLabel, styles.discountText]}>
+                      Membership Discount
+                    </Text>
+                    <Text style={[styles.billLineValue, styles.discountText]}>
+                      − {formatINR(bill.membershipDiscount)}
                     </Text>
                   </View>
                 )}

@@ -380,10 +380,17 @@ const BillSummaryCard = ({ billSummary, handoverCreatedAt, handoverPaymentMethod
               sub="Damage, late fee, cleaning etc."
             />
           )}
-          {discountAmount > 0 && (
+          {Math.max(0, discountAmount - (billSummary.membershipDiscount || 0)) > 0 && (
             <BillLineRow
-              label="Discount"
-              value={`- ${currency(discountAmount)}`}
+              label="Discount (Coupon)"
+              value={`- ${currency(Math.max(0, discountAmount - (billSummary.membershipDiscount || 0)))}`}
+              color={COLORS.green}
+            />
+          )}
+          {(billSummary.membershipDiscount || 0) > 0 && (
+            <BillLineRow
+              label="Membership Discount"
+              value={`- ${currency(billSummary.membershipDiscount)}`}
               color={COLORS.green}
             />
           )}

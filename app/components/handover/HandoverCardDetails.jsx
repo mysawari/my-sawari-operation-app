@@ -469,7 +469,7 @@ export default function HandoverDetails() {
       summaryObj.balanceAmount !== undefined
         ? summaryObj.balanceAmount
         : paymentObj.balanceAmount,
-    membershipDiscount: bookingObj?.membershipDiscount || 0,
+    membershipDiscount: handover?.bookingId?.membershipDiscount || 0,
   };
   // Separate out coupon discount from the total discount
   const couponDiscount = Math.max(0, bill.discountAmount - bill.membershipDiscount);

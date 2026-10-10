@@ -128,7 +128,7 @@ export default function PendingPaymentsScreen() {
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
 
-      const res = await api.get("/handovers/pending-payments", { params: { limit: PAGE_SIZE } });
+      const res = await api.get("/handover/pending-payments", { params: { limit: PAGE_SIZE } });
       const data = res.data?.data || [];
       
       setPayments(data);

@@ -84,9 +84,13 @@ export default function MembershipTrackerScreen() {
   const customer = membership.customerId || {};
   const isActive = new Date(membership.expiresAt) > new Date();
 
-  const filteredHistory = (history || []).filter(item => 
-    !searchBookingQuery || item.bookingId?.toLowerCase().includes(searchBookingQuery.toLowerCase())
-  );
+  const filteredHistory = (history || []).filter(item => {
+    if (!searchBookingQuery) return true;
+    const q = searchBookingQuery.toLowerCase();
+    const bCode = item.bookingCode?.toLowerCase() || '';
+    const bId = item.bookingId?.toLowerCase() || '';
+    return bCode.includes(q) || bId.includes(q);
+  });
 
   const getStatusTimeline = (status) => {
     const s = status.toLowerCase();
@@ -195,15 +199,15 @@ export default function MembershipTrackerScreen() {
           filteredHistory.map(item => (
             <View key={item._id} style={styles.historyCard}>
               <View style={styles.historyTop}>
-                <Text style={styles.bookingId}>{item.bookingId}</Text>
+                <Text style={styles.bookingId}>{item.bookingCode || item.bookingId || 'Unknown ID'}</Text>
                 {getStatusTimeline(item.status)}
               </View>
               <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4}}>
-                <Text style={styles.historyDate}>Pickup: {item.pickupDate ? new Date(item.pickupDate).toLocaleDateString() : 'N/A'}</Text>
-                <Text style={styles.historyDate}>Drop: {item.dropoffDate ? new Date(item.dropoffDate).toLocaleDateString() : 'N/A'}</Text>
+                <Text style={styles.historyDate}>Pickup: {item.fromDate ? new Date(item.fromDate).toLocaleDateString() : 'N/A'}</Text>
+                <Text style={styles.historyDate}>Drop: {item.toDate ? new Date(item.toDate).toLocaleDateString() : 'N/A'}</Text>
               </View>
               <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4}}>
-                <Text style={styles.historyAmount}>Total: ₹{item.totalAmount}</Text>
+                <Text style={styles.historyAmount}>Total: ₹{item.payment?.totalAmount || item.totalAmount || 0}</Text>
                 <View style={{backgroundColor: '#D1FAE5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4}}>
                   <Text style={{fontSize: 11, color: '#059669', fontWeight: '700'}}>Saved: ₹{item.membershipDiscount || 0}</Text>
                 </View>
